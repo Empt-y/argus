@@ -143,6 +143,52 @@ pub struct Attribution {
     pub notice: Option<String>,
 }
 
+/// A provider's usage allowance, as the provider itself defines it.
+///
+/// Declared per driver rather than configured centrally, because these are
+/// facts about the upstream — OpenSky's anonymous tier is 400 credits a day
+/// whatever Argus thinks — and a chain can only ration what it can see.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Quota {
+    /// Units available per window.
+    pub limit: u32,
+    /// How long the window lasts before the allowance resets.
+    pub window: std::time::Duration,
+    /// Units consumed by one poll. Not always one: OpenSky charges more credits
+    /// for a global state vector than for a bounded one, and a driver that
+    /// undercounts will sail past its allowance and start collecting 429s.
+    pub cost_per_poll: u32,
+}
+
+impl Quota {
+    /// A simple daily allowance costing one unit per poll.
+    pub const fn daily(limit: u32) -> Self {
+        Self {
+            limit,
+            window: std::time::Duration::from_secs(86_400),
+            cost_per_poll: 1,
+        }
+    }
+
+    /// How many polls remain from a given consumption.
+    pub const fn polls_remaining(&self, used: u32) -> u32 {
+        if self.cost_per_poll == 0 {
+            return u32::MAX;
+        }
+        self.limit.saturating_sub(used) / self.cost_per_poll
+    }
+
+    /// Fraction of the allowance still unspent, `0.0..=1.0`. Feeds
+    /// [`PollCtx::budget_remaining`] so adaptive drivers can ease off before
+    /// they are cut off entirely.
+    pub fn fraction_remaining(&self, used: u32) -> f64 {
+        if self.limit == 0 {
+            return 0.0;
+        }
+        f64::from(self.limit.saturating_sub(used)) / f64::from(self.limit)
+    }
+}
+
 /// Everything static about a driver.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SourceDescriptor {
@@ -159,6 +205,10 @@ pub struct SourceDescriptor {
     /// individual observation, but never upgrade past this — a source that can
     /// only ever estimate must not be able to claim `Live` for one reading.
     pub base_quality: crate::entity::Quality,
+    /// The provider's own usage allowance, where it publishes one. `None` means
+    /// unmetered — a public feed with no documented cap, or local hardware.
+    #[serde(default)]
+    pub quota: Option<Quota>,
 }
 
 /// Live state of a source, recomputed after every poll and surfaced to clients.
@@ -286,6 +336,28 @@ pub trait Source: Send + Sync {
     /// Fetch and normalise. Implementations must not sleep, retry or cache —
     /// the scheduler owns all three.
     async fn poll(&self, ctx: &PollCtx) -> Result<Vec<Observation>, SourceError>;
+
+    /// Providers this source delegates to, if it is a composite such as a
+    /// failover chain.
+    ///
+    /// Observations carry the id of the provider that actually produced them,
+    /// not the composite's — provenance would be lost otherwise, and the layer
+    /// could not say which upstream a given track came from. So every member
+    /// must be registered alongside the composite, and this is how the runtime
+    /// discovers them.
+    fn members(&self) -> Vec<&SourceDescriptor> {
+        Vec::new()
+    }
+
+    /// Current health of each member, for composites.
+    ///
+    /// Without this a chain is opaque: the layer reports healthy and there is
+    /// no way to see that it has quietly fallen back, which provider is
+    /// carrying it, or how long the primary has left. That state is exactly
+    /// what an operator needs when deciding whether a key is worth getting.
+    async fn member_health(&self) -> Vec<(SourceId, SourceHealth, u64)> {
+        Vec::new()
+    }
 }
 
 /// A feed that pushes to us instead: an AIS websocket, a local SDR, the GDELT

@@ -6,7 +6,9 @@
 //! each driver be tested against a captured fixture with no network.
 
 pub mod celestrak;
+pub mod readsb;
 pub mod usgs;
 
 pub use celestrak::CelestrakSatellites;
+pub use readsb::ReadsbProvider;
 pub use usgs::UsgsEarthquakes;

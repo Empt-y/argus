@@ -4,11 +4,13 @@
 //! decides when each one runs, enforces the guards they share, turns poll
 //! outcomes into honest health states, and writes the results into the DVR.
 
+pub mod chain;
 pub mod http;
 pub mod runtime;
 pub mod scheduler;
 pub mod sources;
 
+pub use chain::{ChainStatus, ProviderChain};
 pub use http::HttpClient;
 pub use runtime::{CredentialResolver, Runtime};
 pub use scheduler::{PollOutcome, SchedulerConfig, SourceState, next_delay, poll_once};

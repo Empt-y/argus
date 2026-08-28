@@ -84,13 +84,24 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- ingest ---------------------------------------------------------
     let http = argus_ingest::HttpClient::new(std::time::Duration::from_secs(30))?;
-    let mut runtime = argus_ingest::Runtime::new(
+    let runtime = argus_ingest::Runtime::new(
         store,
         argus_ingest::SchedulerConfig {
             global_cadence_scale: config.capture.global_cadence_scale,
             aoi_only: false,
         },
     );
+
+    let aois: Vec<argus_core::BoundingBox> =
+        config.aois.iter().map(|a| a.to_bbox()).collect();
+    if aois.is_empty() {
+        tracing::warn!(
+            "no areas of interest configured; bounded sources will fall back to a \
+             single clamped global query. Declare [[aoi]] blocks for the regions \
+             you actually watch."
+        );
+    }
+    let mut runtime = runtime.with_aois(aois);
 
     for source in build_sources(&config, &http) {
         runtime.register(source);
@@ -158,5 +169,25 @@ fn build_sources(
             argus_ingest::sources::CelestrakSatellites::new(http.clone()),
         ));
     }
+
+    // Flights are served by a chain rather than one provider. Both members are
+    // keyless, unmetered and backed by independent receiver networks, so an
+    // outage or a policy change at one costs nothing — which is not
+    // hypothetical: a third candidate, airplanes.live, started requiring a key
+    // during development and would simply have been skipped.
+    //
+    // Order is deliberate: these community aggregators are unmetered and cover
+    // an area of interest well, so they go ahead of any allowance-limited
+    // provider whose credits are better spent elsewhere.
+    if enabled("flights") {
+        let providers: Vec<std::sync::Arc<dyn argus_core::Source>> = vec![
+            std::sync::Arc::new(argus_ingest::sources::ReadsbProvider::adsb_lol(http.clone())),
+            std::sync::Arc::new(argus_ingest::sources::ReadsbProvider::adsb_fi(http.clone())),
+        ];
+        sources.push(std::sync::Arc::new(argus_ingest::ProviderChain::new(
+            "flights", providers,
+        )));
+    }
+
     sources
 }

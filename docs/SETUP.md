@@ -110,3 +110,51 @@ for ns in $(awk '/^nameserver/{print $2}' /etc/resolv.conf); do
   timeout 5 getent ahosts example.com >/dev/null 2>&1 && echo ok || echo SLOW
 done
 ```
+
+## Provider chains
+
+Every free provider has a limit, and most layers can be served by more than one.
+A layer is therefore configured as a ranked chain rather than a single upstream:
+
+```
+flights: adsb.lol -> adsb.fi
+```
+
+The chain is itself a `Source`, so the scheduler treats it exactly like any
+single driver. It sticks with whichever provider answered last rather than
+walking the chain each poll (that would spend the scarce primary allowance on
+liveness checks), but reaches back up every 30 minutes so a daily quota that
+resets at midnight is actually noticed.
+
+Failures are classified rather than lumped together, because "spent" and
+"broken" need different handling:
+
+| Failure | Effect |
+|---|---|
+| Rate limited | Sidelined for `Retry-After`, or 15 min if unstated |
+| Transport / decode | Sidelined 2 min |
+| Allowance spent | Skipped until the quota window rolls over |
+| Rejected credential, 403 on a keyed source, absent hardware | Marked unavailable; never retried on a timer |
+
+Providers declare their own allowance (`SourceDescriptor::quota`), including the
+cost per poll — OpenSky charges more credits for a global query than a bounded
+one, and a chain that assumes one-per-poll sails past the real limit. The
+allowance is charged *before* the call, since a request that times out still
+consumed it.
+
+Each member gets its own row in `sources`, so `GET /v1/sources` shows which
+provider is carrying a layer and why the ones above it are not:
+
+```
+adsb-fi       flights     unknown   0      <- standby, never needed
+adsb-lol      flights     live      349    <- serving
+flights       flights     live      349    <- the chain
+```
+
+`unknown` for a standby is deliberate: it has not answered, but nothing is
+wrong with it. That is a different thing from `live` with zero results.
+
+**Adding a provider to a chain.** Implement `Source` as usual, then list it in
+the chain in preference order. Providers sharing a wire format should share a
+decoder — `sources/readsb.rs` serves adsb.lol, adsb.fi and, in Phase 10, a local
+dump1090 receiver, because a dongle on the roof is just another provider.

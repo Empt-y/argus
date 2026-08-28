@@ -465,6 +465,30 @@ impl Store {
         health: &argus_core::SourceHealth,
         observations_delta: u64,
     ) -> Result<(), StoreError> {
+        self.update_source_health_inner(source_id, health, Some(observations_delta), None)
+            .await
+    }
+
+    /// As above, but sets the observation count outright rather than adding to
+    /// it. Chain members report a running total they own, so accumulating it
+    /// here would square the count on every poll.
+    pub async fn set_source_health(
+        &self,
+        source_id: &argus_core::SourceId,
+        health: &argus_core::SourceHealth,
+        observations_total: u64,
+    ) -> Result<(), StoreError> {
+        self.update_source_health_inner(source_id, health, None, Some(observations_total))
+            .await
+    }
+
+    async fn update_source_health_inner(
+        &self,
+        source_id: &argus_core::SourceId,
+        health: &argus_core::SourceHealth,
+        observations_delta: Option<u64>,
+        observations_total: Option<u64>,
+    ) -> Result<(), StoreError> {
         let (state, error, lag_ms) = model::health_columns(health);
         sqlx::query(
             r#"
@@ -475,7 +499,7 @@ impl Store {
                 last_lag_ms  = $4,
                 last_success = CASE WHEN $2 IN ('live', 'delayed', 'degraded')
                                     THEN now() ELSE last_success END,
-                observations = observations + $5,
+                observations = COALESCE($6, observations + $5),
                 updated_at   = now()
             WHERE source_id = $1
             "#,
@@ -484,7 +508,8 @@ impl Store {
         .bind(state)
         .bind(error)
         .bind(lag_ms)
-        .bind(observations_delta as i64)
+        .bind(observations_delta.unwrap_or(0) as i64)
+        .bind(observations_total.map(|n| n as i64))
         .execute(&self.pool)
         .await?;
         Ok(())

@@ -1,7 +1,8 @@
 //! The ingest runtime: one supervised task per source, writing into the DVR.
 
 use crate::scheduler::{PollOutcome, SchedulerConfig, SourceState, auth_state, next_delay, poll_once, startup_jitter};
-use argus_core::source::{Cadence, Source, SourceError};
+use argus_core::geo::BoundingBox;
+use argus_core::source::{Cadence, Coverage, Source, SourceError};
 use argus_store::Store;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,6 +13,9 @@ pub struct Runtime {
     store: Store,
     config: SchedulerConfig,
     sources: Vec<Arc<dyn Source>>,
+    /// Areas polled at full cadence. Bounded sources are asked about each in
+    /// turn; global ones ignore them.
+    aois: Vec<BoundingBox>,
     cancel: CancellationToken,
 }
 
@@ -21,8 +25,20 @@ impl Runtime {
             store,
             config,
             sources: Vec::new(),
+            aois: Vec::new(),
             cancel: CancellationToken::new(),
         }
+    }
+
+    /// Declare the areas bounded sources should cover.
+    ///
+    /// A bounded source with no areas declared would poll nothing at all, so
+    /// an empty list falls back to a global box at the source's own cadence —
+    /// which the radius cap then clamps to something the endpoint accepts.
+    /// Silently ingesting nothing would be the worse failure.
+    pub fn with_aois(mut self, aois: Vec<BoundingBox>) -> Self {
+        self.aois = aois;
+        self
     }
 
     pub fn register(&mut self, source: Arc<dyn Source>) {
@@ -42,6 +58,12 @@ impl Runtime {
     pub async fn run(self, credentials: &CredentialResolver) -> Result<(), argus_store::StoreError> {
         for source in &self.sources {
             self.store.register_source(source.descriptor()).await?;
+            // Members carry their own rows: observations reference the provider
+            // that actually produced them, and per-provider health is what
+            // makes "serving via the fallback" inspectable rather than folklore.
+            for member in source.members() {
+                self.store.register_source(member).await?;
+            }
         }
 
         let count = self.sources.len();
@@ -53,6 +75,7 @@ impl Runtime {
             let config = self.config.clone();
             let cancel = self.cancel.clone();
             let has_credential = credentials.has_for(&descriptor);
+            let aois = self.aois.clone();
 
             handles.push(tokio::spawn(async move {
                 // A source that cannot run for want of a key or a dongle is
@@ -82,7 +105,8 @@ impl Runtime {
 
                 let mut state = SourceState::default();
                 loop {
-                    let (outcome, retry_after) = poll_and_store(&store, &source, &mut state).await;
+                    let (outcome, retry_after) =
+                        poll_and_store(&store, &source, &mut state, &aois).await;
 
                     if !state.should_continue() {
                         tracing::warn!(
@@ -128,13 +152,12 @@ async fn poll_and_store(
     store: &Store,
     source: &Arc<dyn Source>,
     state: &mut SourceState,
+    aois: &[BoundingBox],
 ) -> (PollOutcome, Option<Duration>) {
     let descriptor = source.descriptor();
-    let ctx = argus_core::PollCtx::default();
 
-    match poll_once(source, &ctx).await {
+    match poll_scoped(source, aois).await {
         Ok(observations) => {
-            let total = observations.len() as u64;
             // Only feeds describing current state have a meaningful lag, and
             // the freshest reading is what measures it — the oldest item in a
             // rolling window says nothing about how current the feed is.
@@ -151,14 +174,21 @@ async fn poll_and_store(
             let written = match store.write_observations(&observations).await {
                 Ok(w) => w,
                 Err(err) => {
-                    // A store failure is ours, not the source's. Recording it
-                    // as source ill-health would blame the upstream for our bug
-                    // and send whoever is debugging in the wrong direction.
+                    // A store failure is ours, not the source's — so say so.
+                    // Folding it into the normal rejected count would report
+                    // "N of M readings failed validation", blaming perfectly
+                    // good upstream data for a local fault and sending whoever
+                    // is debugging in exactly the wrong direction.
                     tracing::error!(source = %descriptor.id, "failed to store batch: {err}");
-                    argus_store::WriteOutcome {
-                        skipped: total,
-                        ..Default::default()
-                    }
+                    let health = argus_core::SourceHealth::Degraded {
+                        reason: format!("upstream healthy; store rejected the batch: {err}"),
+                        observations: 0,
+                    };
+                    let _ = store
+                        .update_source_health(&descriptor.id, &health, 0)
+                        .await;
+                    state.health = health;
+                    return (PollOutcome::default(), None);
                 }
             };
 
@@ -176,6 +206,14 @@ async fn poll_and_store(
             let _ = store
                 .update_source_health(&descriptor.id, &state.health, written.inserted)
                 .await;
+
+            // Composites publish their members' state too, so a chain that has
+            // fallen back says which provider is carrying it and why.
+            for (member_id, member_health, member_observations) in source.member_health().await {
+                let _ = store
+                    .set_source_health(&member_id, &member_health, member_observations)
+                    .await;
+            }
             (outcome, None)
         }
         Err(err) => {
@@ -191,6 +229,56 @@ async fn poll_and_store(
             (PollOutcome::default(), retry_after)
         }
     }
+}
+
+/// Poll a source across whatever areas it needs asking about.
+///
+/// Global sources answer in one call. Bounded ones must be asked per area, and
+/// the results are merged — the same aircraft seen from two overlapping areas
+/// collapses to one entity downstream, because the entity key is the aircraft's
+/// own address rather than anything about the request.
+///
+/// A partial failure is not a failure: if one area answers and another does
+/// not, the data that did arrive is kept. Returning an error would throw away
+/// good observations because a neighbouring box timed out.
+async fn poll_scoped(
+    source: &Arc<dyn Source>,
+    aois: &[BoundingBox],
+) -> Result<Vec<argus_core::Observation>, SourceError> {
+    let descriptor = source.descriptor();
+    if !matches!(descriptor.coverage, Coverage::Bounded) {
+        return poll_once(source, &argus_core::PollCtx::default()).await;
+    }
+
+    let areas: Vec<BoundingBox> = if aois.is_empty() {
+        vec![BoundingBox::GLOBAL]
+    } else {
+        // A wrapped box cannot be expressed as one query; split before asking.
+        aois.iter().flat_map(BoundingBox::split_at_antimeridian).collect()
+    };
+
+    let mut merged = Vec::new();
+    let mut last_error = None;
+    for bbox in areas {
+        let ctx = argus_core::PollCtx {
+            bbox: Some(bbox),
+            ..Default::default()
+        };
+        match poll_once(source, &ctx).await {
+            Ok(mut obs) => merged.append(&mut obs),
+            Err(err) => {
+                tracing::warn!(source = %descriptor.id, "area poll failed: {err}");
+                last_error = Some(err);
+            }
+        }
+    }
+
+    if merged.is_empty()
+        && let Some(err) = last_error
+    {
+        return Err(err);
+    }
+    Ok(merged)
 }
 
 /// Looks up whether a source has the credential its `AuthRequirement` names.
@@ -267,6 +355,7 @@ mod tests {
                 notice: None,
             },
             base_quality: Quality::Live,
+            quota: None,
         }
     }
 

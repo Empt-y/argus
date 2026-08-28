@@ -92,6 +92,10 @@ impl CelestrakSatellites {
                 },
                 // Never measured. Always the output of a model.
                 base_quality: Quality::Modeled,
+                // No published numeric cap; CelesTrak instead asks that
+                // element sets be cached rather than re-fetched, which
+                // ELEMENTS_TTL honours. It enforces that with 403s.
+                quota: None,
             },
             http,
             cache: RwLock::new(None),

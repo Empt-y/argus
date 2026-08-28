@@ -44,6 +44,8 @@ impl UsgsEarthquakes {
                     notice: None,
                 },
                 base_quality: Quality::Live,
+                // USGS publishes no documented cap on the summary feeds.
+                quota: None,
             },
             http,
         }
