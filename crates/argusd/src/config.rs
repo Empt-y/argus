@@ -150,6 +150,9 @@ pub struct AoiConfig {
 }
 
 impl AoiConfig {
+    /// Used by the ingest scheduler to decide whether a poll is inside an area
+    /// of interest and therefore runs at full cadence.
+    #[allow(dead_code, reason = "wired up by the scheduler in phase 1")]
     pub fn to_bbox(&self) -> argus_core::BoundingBox {
         argus_core::BoundingBox::new(self.bbox[0], self.bbox[1], self.bbox[2], self.bbox[3])
     }

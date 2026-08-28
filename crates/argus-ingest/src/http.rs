@@ -1,0 +1,135 @@
+//! A shared HTTP client with the guards every driver needs and none should have
+//! to write.
+//!
+//! Drivers get a client that already enforces timeouts, response size caps and a
+//! polite user agent. They do not get to disable those, because "just this one
+//! feed" is how a single malformed upstream response ends up buffering a
+//! gigabyte into the daemon's heap.
+
+use argus_core::source::SourceError;
+use std::time::Duration;
+
+/// Default ceiling on a response body. Deliberately generous — Overpass and
+/// STAC replies are genuinely large — but finite.
+pub const DEFAULT_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+const USER_AGENT: &str = concat!(
+    "argus/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/Empt-y/argus)"
+);
+
+#[derive(Debug, Clone)]
+pub struct HttpClient {
+    inner: reqwest::Client,
+    max_bytes: usize,
+}
+
+impl HttpClient {
+    pub fn new(timeout: Duration) -> Result<Self, SourceError> {
+        let inner = reqwest::Client::builder()
+            .timeout(timeout)
+            .connect_timeout(Duration::from_secs(10))
+            // Several providers redirect between CDN hosts; a couple of hops is
+            // normal, an unbounded chain is a loop.
+            .redirect(reqwest::redirect::Policy::limited(4))
+            .user_agent(USER_AGENT)
+            .build()
+            .map_err(|e| SourceError::Transport(e.to_string()))?;
+        Ok(Self {
+            inner,
+            max_bytes: DEFAULT_MAX_BYTES,
+        })
+    }
+
+    #[must_use]
+    pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_bytes = max_bytes;
+        self
+    }
+
+    /// GET a URL, enforcing the size cap while the body streams rather than
+    /// after it has already been buffered.
+    pub async fn get_bytes(&self, url: &str) -> Result<Vec<u8>, SourceError> {
+        let response = self
+            .inner
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| SourceError::Transport(e.to_string()))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .map(Duration::from_secs);
+            return Err(SourceError::RateLimited { retry_after });
+        }
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(SourceError::Auth(format!("upstream returned {status}")));
+        }
+        if !status.is_success() {
+            return Err(SourceError::Transport(format!(
+                "upstream returned {status}"
+            )));
+        }
+
+        // Trust Content-Length when it is present and over the cap: no reason to
+        // stream a body we already know we will reject.
+        if let Some(len) = response.content_length()
+            && len as usize > self.max_bytes
+        {
+            return Err(SourceError::ResponseTooLarge {
+                limit: self.max_bytes,
+            });
+        }
+
+        use futures::StreamExt;
+        let mut stream = response.bytes_stream();
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| SourceError::Transport(e.to_string()))?;
+            // Check before extending, so a hostile or broken upstream cannot
+            // push us one whole chunk past the limit.
+            if buf.len() + chunk.len() > self.max_bytes {
+                return Err(SourceError::ResponseTooLarge {
+                    limit: self.max_bytes,
+                });
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        Ok(buf)
+    }
+
+    /// GET and deserialise JSON.
+    pub async fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+    ) -> Result<T, SourceError> {
+        let bytes = self.get_bytes(url).await?;
+        serde_json::from_slice(&bytes).map_err(|e| SourceError::Decode(e.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_user_agent_identifies_the_project() {
+        // Several of the free upstreams (Overpass, Radio Browser, Nominatim)
+        // ask for a contactable UA and throttle or block generic ones.
+        assert!(USER_AGENT.starts_with("argus/"));
+        assert!(USER_AGENT.contains("github.com"));
+    }
+
+    #[test]
+    fn clients_build_with_a_finite_default_cap() {
+        let c = HttpClient::new(Duration::from_secs(5)).expect("client builds");
+        assert_eq!(c.max_bytes, DEFAULT_MAX_BYTES);
+        assert_eq!(c.with_max_bytes(1024).max_bytes, 1024);
+    }
+}
