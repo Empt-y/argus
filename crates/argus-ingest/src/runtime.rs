@@ -5,8 +5,12 @@ use argus_core::geo::BoundingBox;
 use argus_core::source::{Cadence, Coverage, Source, SourceError};
 use argus_store::Store;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+
+/// How often to re-measure the store against its budget.
+const DISK_CHECK_INTERVAL: Duration = Duration::from_secs(300);
 
 /// Owns the running ingest tasks.
 pub struct Runtime {
@@ -16,6 +20,10 @@ pub struct Runtime {
     /// Areas polled at full cadence. Bounded sources are asked about each in
     /// turn; global ones ignore them.
     aois: Vec<BoundingBox>,
+    /// Flipped by the disk guard. Read per poll rather than captured at
+    /// startup, so degradation takes effect on a running daemon instead of
+    /// waiting for a restart that may never come.
+    degraded: Arc<AtomicBool>,
     cancel: CancellationToken,
 }
 
@@ -26,8 +34,14 @@ impl Runtime {
             config,
             sources: Vec::new(),
             aois: Vec::new(),
+            degraded: Arc::new(AtomicBool::new(false)),
             cancel: CancellationToken::new(),
         }
+    }
+
+    /// Whether the disk guard has tripped.
+    pub fn is_degraded(&self) -> bool {
+        self.degraded.load(Ordering::Relaxed)
     }
 
     /// Declare the areas bounded sources should cover.
@@ -55,7 +69,14 @@ impl Runtime {
     /// has a `sources` row to resolve its `layer_id` against — otherwise the
     /// first batch from each feed lands with the source id standing in for the
     /// layer, and the clients briefly show a layer that does not exist.
-    pub async fn run(self, credentials: &CredentialResolver) -> Result<(), argus_store::StoreError> {
+    pub async fn run(
+        self,
+        credentials: &CredentialResolver,
+        budget_bytes: u64,
+        warn_fraction: f64,
+    ) -> Result<(), argus_store::StoreError> {
+        self.spawn_disk_guard(budget_bytes, warn_fraction);
+
         for source in &self.sources {
             self.store.register_source(source.descriptor()).await?;
             // Members carry their own rows: observations reference the provider
@@ -76,6 +97,7 @@ impl Runtime {
             let cancel = self.cancel.clone();
             let has_credential = credentials.has_for(&descriptor);
             let aois = self.aois.clone();
+            let degraded = self.degraded.clone();
 
             handles.push(tokio::spawn(async move {
                 // A source that cannot run for want of a key or a dongle is
@@ -116,10 +138,15 @@ impl Runtime {
                         return;
                     }
 
+                    // Read the guard per poll, not once at startup.
+                    let effective = SchedulerConfig {
+                        aoi_only: degraded.load(Ordering::Relaxed),
+                        ..config.clone()
+                    };
                     let delay = next_delay(
                         descriptor.cadence,
                         &state,
-                        &config,
+                        &effective,
                         1.0,
                         retry_after,
                     );
@@ -228,6 +255,59 @@ async fn poll_and_store(
                 .await;
             (PollOutcome::default(), retry_after)
         }
+    }
+}
+
+impl Runtime {
+    /// Watch the store against its budget and degrade capture rather than
+    /// filling the filesystem.
+    ///
+    /// Degrading means slowing the cadence outside the declared areas of
+    /// interest, not stopping. A daemon that goes silent when disk runs short
+    /// is worse than one that keeps a thinner record: the whole point is that
+    /// history exists, and the areas the operator actually watches keep full
+    /// fidelity either way.
+    fn spawn_disk_guard(&self, budget_bytes: u64, warn_fraction: f64) {
+        let store = self.store.clone();
+        let degraded = self.degraded.clone();
+        let cancel = self.cancel.clone();
+        let threshold = (budget_bytes as f64 * warn_fraction.clamp(0.0, 1.0)) as u64;
+
+        tokio::spawn(async move {
+            loop {
+                match store.total_bytes().await {
+                    Ok(bytes) => {
+                        let used = bytes.max(0) as u64;
+                        let over = used > threshold;
+                        // Only log on a transition; a five-minute heartbeat
+                        // saying "still fine" is noise that trains people to
+                        // ignore the log.
+                        if degraded.swap(over, Ordering::Relaxed) != over {
+                            if over {
+                                tracing::warn!(
+                                    used_mb = used / 1_048_576,
+                                    threshold_mb = threshold / 1_048_576,
+                                    "store over threshold — slowing capture outside areas of interest"
+                                );
+                            } else {
+                                tracing::info!(
+                                    used_mb = used / 1_048_576,
+                                    "store back under threshold — resuming full capture"
+                                );
+                            }
+                        }
+                    }
+                    // A failed measurement must not silently disarm the guard.
+                    // Leave the current state alone and say so.
+                    Err(err) => tracing::warn!("disk guard could not measure the store: {err}"),
+                }
+
+                tokio::select! {
+                    _ = cancel.cancelled() => return,
+                    _ = tokio::time::sleep(DISK_CHECK_INTERVAL) => {}
+                }
+            }
+        });
     }
 }
 

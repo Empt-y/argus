@@ -43,13 +43,22 @@ bbox = [-2.5, 51.0, 0.5, 52.5]
 # Every source runs keyless unless noted. Omitting a section leaves the source
 # enabled at its declared cadence.
 
+# OpenSky is the last member of the flights chain. Anonymous access works fully
+# at 400 credits/day; an account raises that tenfold. Because it is reached only
+# when both unmetered aggregators are down, its allowance is charged at the
+# worst-case tariff — under-using it costs nothing, overrunning it earns 429s.
 [sources.opensky]
 enabled = true
-# Anonymous works. OAuth raises the polling credit allowance.
 # credentials = { client_id = "", client_secret = "" }
 
-[sources.usgs-quakes]
-enabled = true
+# Layers served by a provider chain are toggled by the LAYER id, not by the
+# individual providers. Disabling a member is done by removing it from the chain
+# in code; the config decides whether the layer runs at all.
+[sources.earthquakes]
+enabled = true    # chain: usgs-quakes -> emsc-quakes
+
+[sources.flights]
+enabled = true    # chain: adsb-lol -> adsb-fi -> opensky
 
 [sources.celestrak]
 enabled = true

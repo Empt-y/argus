@@ -66,7 +66,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     store.migrate().await?;
 
     let bytes = store.total_bytes().await?;
-    let budget = config.capture.disk_budget_gb * 1024 * 1024 * 1024;
+    let budget: u64 = config.capture.disk_budget_gb * 1024 * 1024 * 1024;
     tracing::info!(
         used_mb = bytes / 1024 / 1024,
         budget_gb = config.capture.disk_budget_gb,
@@ -75,6 +75,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if bytes as u64 > (budget as f64 * config.capture.disk_warn_fraction) as u64 {
         tracing::warn!("store is above the disk warning threshold; capture will degrade to AOI-only");
     }
+
 
     tracing::info!(
         aois = config.aois.len(),
@@ -137,7 +138,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     tracing::info!("argusd startup complete; ingest running");
-    runtime.run(&credentials).await?;
+    runtime
+        .run(&credentials, budget, config.capture.disk_warn_fraction)
+        .await?;
     tracing::info!("ingest stopped");
     Ok(())
 }
@@ -159,10 +162,17 @@ fn build_sources(
     };
 
     let mut sources: Vec<std::sync::Arc<dyn argus_core::Source>> = Vec::new();
-    if enabled("usgs-quakes") {
-        sources.push(std::sync::Arc::new(
-            argus_ingest::sources::UsgsEarthquakes::new(http.clone()),
-        ));
+    // Earthquakes run as a chain too. Both catalogues are global and keyless;
+    // EMSC covers the case where USGS is unreachable, which has happened during
+    // US government shutdowns.
+    if enabled("earthquakes") {
+        let providers: Vec<std::sync::Arc<dyn argus_core::Source>> = vec![
+            std::sync::Arc::new(argus_ingest::sources::UsgsEarthquakes::new(http.clone())),
+            std::sync::Arc::new(argus_ingest::sources::EmscEarthquakes::new(http.clone())),
+        ];
+        sources.push(std::sync::Arc::new(argus_ingest::ProviderChain::new(
+            "earthquakes", providers,
+        )));
     }
     if enabled("celestrak") {
         sources.push(std::sync::Arc::new(
@@ -183,6 +193,10 @@ fn build_sources(
         let providers: Vec<std::sync::Arc<dyn argus_core::Source>> = vec![
             std::sync::Arc::new(argus_ingest::sources::ReadsbProvider::adsb_lol(http.clone())),
             std::sync::Arc::new(argus_ingest::sources::ReadsbProvider::adsb_fi(http.clone())),
+            // Last resort. Metered at 400 credits a day anonymously, so its
+            // allowance is only spent when both unmetered networks are down —
+            // which is precisely when it is worth having.
+            std::sync::Arc::new(argus_ingest::sources::OpenSky::new(http.clone())),
         ];
         sources.push(std::sync::Arc::new(argus_ingest::ProviderChain::new(
             "flights", providers,
