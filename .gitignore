@@ -1,0 +1,10 @@
+/target
+/.gev-cache
+/web/node_modules
+/web/dist
+/droid/.gradle
+/droid/build
+/droid/*/build
+/droid/local.properties
+argus.toml
+*.log

@@ -1,0 +1,94 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/argus-core",
+    "crates/argus-store",
+    "crates/argus-ingest",
+    "crates/argus-tiles",
+    "crates/argus-analyze",
+    "crates/argus-alert",
+    "crates/argus-api",
+    "crates/argusd",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT"
+repository = "https://github.com/Empt-y/argus"
+
+[workspace.dependencies]
+# --- internal ---
+argus-core = { path = "crates/argus-core" }
+argus-store = { path = "crates/argus-store" }
+argus-ingest = { path = "crates/argus-ingest" }
+argus-tiles = { path = "crates/argus-tiles" }
+argus-analyze = { path = "crates/argus-analyze" }
+argus-alert = { path = "crates/argus-alert" }
+argus-api = { path = "crates/argus-api" }
+
+# --- async runtime + http ---
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+axum = { version = "0.8", features = ["ws", "macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors", "compression-gzip", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+    "gzip",
+    "brotli",
+    "stream",
+] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+
+# --- storage ---
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "chrono",
+    "uuid",
+    "json",
+    "macros",
+    "migrate",
+] }
+
+# --- serialisation + errors ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "2"
+anyhow = "1"
+
+# --- observability ---
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# --- geo ---
+geo = "0.29"
+geo-types = { version = "0.7", features = ["serde"] }
+geozero = { version = "0.14", features = ["with-postgis-sqlx", "with-mvt", "with-geo"] }
+sgp4 = "2"
+
+# --- misc ---
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+async-trait = "0.1"
+futures = "0.3"
+governor = "0.7"
+rand = "0.8"
+base64 = "0.22"
+csv = "1"
+quick-xml = { version = "0.37", features = ["serialize"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

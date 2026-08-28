@@ -1,0 +1,52 @@
+# Argus daemon.
+#
+# Install:
+#   sudo install -Dm644 deploy/argusd.service /etc/systemd/system/argusd.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now argusd
+
+[Unit]
+Description=Argus spatial intelligence daemon
+Documentation=https://github.com/Empt-y/argus
+After=network-online.target postgresql-18.service
+Wants=network-online.target
+Requires=postgresql-18.service
+
+[Service]
+Type=simple
+User=argus
+Group=argus
+ExecStart=/usr/local/bin/argusd
+Environment=ARGUS_CONFIG=/etc/argus/argus.toml
+Environment=ARGUS_LOG=argusd=info,argus_store=info,argus_ingest=info
+Restart=on-failure
+RestartSec=5s
+
+# The daemon holds every configured provider credential, so give it as little
+# of the system as it can run with.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+# Raster tiles, disk caches and STAC scratch.
+StateDirectory=argus
+CacheDirectory=argus
+ReadWritePaths=/var/lib/argus /var/cache/argus
+# Outbound only; the listener is bound per config.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

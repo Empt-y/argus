@@ -1,0 +1,67 @@
+# Argus daemon configuration.
+#
+#   sudo install -Dm600 -o argus -g argus deploy/argus.example.toml /etc/argus/argus.toml
+#
+# This file holds secrets. Keep it 0600 and owned by the argus user.
+
+[server]
+# Loopback by default. Widening this brokers every credential below to anyone
+# who can reach the port — prefer reaching it over Tailscale to exposing it on
+# the LAN, and set provider-side budget caps before doing either.
+bind = "127.0.0.1:8787"
+allowed_origins = ["http://localhost:5173"]
+
+[database]
+url = "postgres://argus@localhost/argus"
+max_connections = 16
+
+[capture]
+# Outside the areas of interest below, poll this many times slower. Global
+# aircraft capture at full rate is roughly 57 million rows a day; at 4x it is a
+# quarter of that, and the AOIs still get full fidelity.
+global_cadence_scale = 4.0
+disk_budget_gb = 80
+disk_warn_fraction = 0.85
+
+[retention]
+raw = "7 days"
+tracks = "90 days"
+
+# The only credentials that reach the browser — CesiumJS needs them directly to
+# load the photorealistic tileset. Restrict both at the provider (HTTP referrer
+# for Google, token scope for ion); that restriction is what protects them.
+[client_keys]
+# google_maps_api_key = ""
+# cesium_ion_token = ""
+
+# Full-cadence capture areas. Add one per region you actually watch.
+[[aoi]]
+name = "home"
+bbox = [-2.5, 51.0, 0.5, 52.5]
+
+# --- sources -----------------------------------------------------------------
+# Every source runs keyless unless noted. Omitting a section leaves the source
+# enabled at its declared cadence.
+
+[sources.opensky]
+enabled = true
+# Anonymous works. OAuth raises the polling credit allowance.
+# credentials = { client_id = "", client_secret = "" }
+
+[sources.usgs-quakes]
+enabled = true
+
+[sources.celestrak]
+enabled = true
+
+[sources.aisstream]
+enabled = false
+# credentials = { api_key = "" }
+
+[sources.firms]
+enabled = false
+# credentials = { map_key = "" }
+
+[sources.tomtom]
+enabled = false
+# credentials = { api_key = "" }

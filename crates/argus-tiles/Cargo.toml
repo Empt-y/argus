@@ -1,0 +1,23 @@
+[package]
+name = "argus-tiles"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+argus-core = { workspace = true }
+argus-store = { workspace = true }
+geozero = { workspace = true }
+geo-types = { workspace = true }
+geo = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
