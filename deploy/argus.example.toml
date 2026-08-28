@@ -53,6 +53,10 @@ enabled = true
 
 [sources.celestrak]
 enabled = true
+# Tracks a curated ~1,100-object core catalogue: stations, naked-eye visible,
+# all four GNSS constellations, weather, science, and the geostationary belt.
+# The full 16,469-object active catalogue is deliberately not the default — at a
+# 60-second propagation cadence it is ~23 million rows a day.
 
 [sources.aisstream]
 enabled = false

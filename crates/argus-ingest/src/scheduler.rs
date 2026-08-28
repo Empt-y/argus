@@ -205,6 +205,30 @@ pub fn startup_jitter(interval: Duration, source_index: usize, source_count: usi
     interval.mul_f64(source_index as f64 / source_count as f64)
 }
 
+/// Decide what a 403 actually meant.
+///
+/// A source that sends a credential and is refused has a credential problem,
+/// and retrying earns an IP ban rather than a fix. A source that sends nothing
+/// cannot have one — it is being throttled or blocked, which backoff is exactly
+/// the right response to. CelesTrak does precisely this to clients that pull
+/// the full catalogue too often.
+pub fn resolve_forbidden(err: SourceError, auth: &AuthRequirement) -> SourceError {
+    let SourceError::Forbidden(msg) = &err else {
+        return err;
+    };
+    match auth {
+        AuthRequirement::None | AuthRequirement::Hardware { .. } => SourceError::RateLimited {
+            retry_after: None,
+        },
+        // An optional key may or may not be in play; treat it as throttling so
+        // a keyless user is not told their absent key was rejected.
+        AuthRequirement::Optional { .. } => SourceError::RateLimited { retry_after: None },
+        AuthRequirement::Required { .. } | AuthRequirement::OAuth { .. } => {
+            SourceError::Auth(msg.clone())
+        }
+    }
+}
+
 /// Whether a source can run at all with the credentials it has been given.
 pub fn auth_state(auth: &AuthRequirement, has_credential: bool) -> Option<SourceHealth> {
     match auth {
@@ -232,7 +256,9 @@ pub fn auth_state(auth: &AuthRequirement, has_credential: bool) -> Option<Source
 /// Run one poll and classify the result. Kept separate from the driving loop so
 /// it can be tested without timers.
 pub async fn poll_once(source: &Arc<dyn Source>, ctx: &PollCtx) -> Result<Vec<argus_core::Observation>, SourceError> {
-    let observations = source.poll(ctx).await?;
+    let observations = source.poll(ctx).await.map_err(|err| {
+        resolve_forbidden(err, &source.descriptor().auth)
+    })?;
     let descriptor = source.descriptor();
     Ok(observations
         .into_iter()

@@ -86,8 +86,12 @@ impl HttpClient {
                 .map(Duration::from_secs);
             return Err(SourceError::RateLimited { retry_after });
         }
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        // 401 is unambiguous. 403 is not — see SourceError::Forbidden.
+        if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(SourceError::Auth(format!("upstream returned {status}")));
+        }
+        if status == reqwest::StatusCode::FORBIDDEN {
+            return Err(SourceError::Forbidden(format!("upstream returned {status}")));
         }
         if !status.is_success() {
             return Err(SourceError::Transport(format!(

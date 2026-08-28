@@ -222,6 +222,13 @@ pub enum SourceError {
     Decode(String),
     #[error("credential missing or rejected: {0}")]
     Auth(String),
+    /// HTTP 403. Deliberately distinct from [`SourceError::Auth`]: for a source
+    /// that sends no credential a 403 cannot mean "your key is wrong", so it is
+    /// almost always throttling or IP-level blocking — which retrying *does*
+    /// eventually fix. Only the scheduler knows whether the source authenticates,
+    /// so only the scheduler can resolve which it is.
+    #[error("forbidden by upstream: {0}")]
+    Forbidden(String),
     #[error("rate limited{}", .retry_after.map(|d| format!(", retry after {}s", d.as_secs())).unwrap_or_default())]
     RateLimited {
         retry_after: Option<std::time::Duration>,
@@ -239,7 +246,10 @@ impl SourceError {
     pub const fn is_retryable(&self) -> bool {
         matches!(
             self,
-            Self::Transport(_) | Self::RateLimited { .. } | Self::Decode(_)
+            Self::Transport(_)
+                | Self::RateLimited { .. }
+                | Self::Decode(_)
+                | Self::Forbidden(_)
         )
     }
 }

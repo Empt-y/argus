@@ -153,5 +153,10 @@ fn build_sources(
             argus_ingest::sources::UsgsEarthquakes::new(http.clone()),
         ));
     }
+    if enabled("celestrak") {
+        sources.push(std::sync::Arc::new(
+            argus_ingest::sources::CelestrakSatellites::new(http.clone()),
+        ));
+    }
     sources
 }

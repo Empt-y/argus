@@ -110,7 +110,11 @@ impl EntityId {
         Self::new(EntityKind::Vessel, mmsi.to_string())
     }
 
-    pub fn satellite(norad_id: u32) -> Self {
+    /// NORAD catalogue number. Takes `u64` rather than `u32` deliberately: the
+    /// public catalogue has outgrown the historical 5-digit range, and
+    /// truncating an id would silently merge two different objects onto one
+    /// track.
+    pub fn satellite(norad_id: u64) -> Self {
         Self::new(EntityKind::Satellite, norad_id.to_string())
     }
 }

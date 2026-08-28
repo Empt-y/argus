@@ -7,6 +7,7 @@
 
 pub mod entity;
 pub mod geo;
+pub mod orbital;
 pub mod source;
 
 pub use entity::{
