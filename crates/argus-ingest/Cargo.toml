@@ -27,5 +27,6 @@ governor = { workspace = true }
 tokio-util = { workspace = true }
 rand = { workspace = true }
 csv = { workspace = true }
+geo-types = { workspace = true }
 quick-xml = { workspace = true }
 sgp4 = { workspace = true }

@@ -19,6 +19,9 @@ pub struct EntityRow {
     pub observed_at: DateTime<Utc>,
     pub lon: Option<f64>,
     pub lat: Option<f64>,
+    /// Non-point geography as GeoJSON, when the entity has a shape as well as
+    /// (or instead of) a point.
+    pub geom: Option<serde_json::Value>,
     pub alt_m: Option<f64>,
     pub alt_datum: Option<String>,
     pub course_deg: Option<f32>,

@@ -316,3 +316,88 @@ async fn a_moving_entity_is_never_deduped_away() {
     assert_eq!(written.inserted, 5);
     assert_eq!(written.deduped, 0);
 }
+
+#[tokio::test]
+async fn polygons_survive_the_round_trip_as_geometry() {
+    // Regression: `Observation::geom` existed from the start but the schema had
+    // nowhere to put it, so any observation whose shape was its whole meaning —
+    // a weather alert area, a fire perimeter, a forecast cone — was accepted by
+    // is_meaningful() and then written with the geometry silently discarded.
+    let store = require_db!();
+
+    let square = geo_types::Polygon::new(
+        geo_types::LineString(vec![
+            geo_types::Coord { x: -97.0, y: 30.0 },
+            geo_types::Coord { x: -96.0, y: 30.0 },
+            geo_types::Coord { x: -96.0, y: 31.0 },
+            geo_types::Coord { x: -97.0, y: 31.0 },
+            geo_types::Coord { x: -97.0, y: 30.0 },
+        ]),
+        vec![],
+    );
+    let obs = Observation::new(
+        SourceId::new("test-adsb"),
+        EntityId::new(argus_core::EntityKind::Event, "alert-1"),
+        Utc::now() - Duration::seconds(30),
+        Quality::Live,
+    )
+    .with_geom(geo_types::Geometry::Polygon(square))
+    .with_position(Position::surface(-96.5, 30.5))
+    .with_label("Severe Thunderstorm Warning");
+
+    assert_eq!(store.write_observations(&[obs]).await.expect("write").inserted, 1);
+
+    let found = store
+        .entities_in_bbox(BoundingBox::new(-98.0, 29.0, -95.0, 32.0), &[], 100)
+        .await
+        .expect("query");
+    let row = found
+        .iter()
+        .find(|r| r.entity_key == "alert-1")
+        .expect("alert present");
+
+    let geom = row.geom.as_ref().expect("geometry survived the round trip");
+    assert_eq!(geom["type"], serde_json::json!("Polygon"));
+    let ring = geom["coordinates"][0].as_array().expect("outer ring");
+    assert_eq!(ring.len(), 5, "ring was not preserved intact");
+    // And the label anchor is still there alongside it — the two are distinct.
+    assert!(row.lon.is_some() && row.lat.is_some());
+}
+
+#[tokio::test]
+async fn a_shape_is_found_by_a_box_that_misses_its_label_anchor() {
+    // A viewport clipping the corner of a large alert area must still find it.
+    // Matching only on the point would hide any polygon whose anchor happens to
+    // sit outside the current view — which for a big warning is most views.
+    let store = require_db!();
+    let strip = geo_types::Polygon::new(
+        geo_types::LineString(vec![
+            geo_types::Coord { x: -100.0, y: 30.0 },
+            geo_types::Coord { x: -90.0, y: 30.0 },
+            geo_types::Coord { x: -90.0, y: 31.0 },
+            geo_types::Coord { x: -100.0, y: 31.0 },
+            geo_types::Coord { x: -100.0, y: 30.0 },
+        ]),
+        vec![],
+    );
+    let obs = Observation::new(
+        SourceId::new("test-adsb"),
+        EntityId::new(argus_core::EntityKind::Event, "wide-alert"),
+        Utc::now() - Duration::seconds(30),
+        Quality::Live,
+    )
+    .with_geom(geo_types::Geometry::Polygon(strip))
+    // Anchor at the middle, far from the box we will query.
+    .with_position(Position::surface(-95.0, 30.5));
+    store.write_observations(&[obs]).await.expect("write");
+
+    // A box over the western end only: contains the polygon, not the anchor.
+    let found = store
+        .entities_in_bbox(BoundingBox::new(-99.5, 30.2, -99.0, 30.8), &[], 100)
+        .await
+        .expect("query");
+    assert!(
+        found.iter().any(|r| r.entity_key == "wide-alert"),
+        "polygon was missed because the query only matched its anchor point"
+    );
+}

@@ -7,12 +7,14 @@
 
 pub mod celestrak;
 pub mod emsc;
+pub mod nws;
 pub mod opensky;
 pub mod readsb;
 pub mod usgs;
 
 pub use celestrak::CelestrakSatellites;
 pub use emsc::EmscEarthquakes;
+pub use nws::NwsAlerts;
 pub use opensky::OpenSky;
 pub use readsb::ReadsbProvider;
 pub use usgs::UsgsEarthquakes;

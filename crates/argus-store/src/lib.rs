@@ -5,6 +5,7 @@
 use argus_core::entity::{AltitudeDatum, EntityId, EntityKind, Observation, Position, Quality};
 use argus_core::geo::BoundingBox;
 use chrono::{DateTime, Utc};
+use geozero::ToWkb;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::time::Duration;
 
@@ -168,12 +169,32 @@ impl Store {
             .collect();
         let label: Vec<Option<String>> = rows.iter().map(|o| o.label.clone()).collect();
         let attrs: Vec<serde_json::Value> = rows.iter().map(|o| o.attrs.clone()).collect();
+        // EWKB carries the SRID with the bytes, so the database is told 4326
+        // explicitly rather than inferring it from the column type. A geometry
+        // that fails to encode is dropped to NULL rather than failing the whole
+        // batch: one malformed polygon must not cost the other ten thousand
+        // aircraft in the same write.
+        let geom: Vec<Option<Vec<u8>>> = rows
+            .iter()
+            .map(|o| {
+                o.geom.as_ref().and_then(|g| {
+                    g.to_ewkb(geozero::CoordDimensions::xy(), Some(4326))
+                        .map_err(|err| {
+                            tracing::warn!(
+                                entity = %o.entity,
+                                "dropping unencodable geometry: {err}"
+                            );
+                        })
+                        .ok()
+                })
+            })
+            .collect();
 
         let inserted = sqlx::query(
             r#"
             INSERT INTO observations (
                 observed_at, ingested_at, source_id, entity_kind, entity_key,
-                position, alt_m, alt_datum,
+                position, geom, alt_m, alt_datum,
                 course_deg, heading_deg, speed_mps, vrate_mps,
                 quality, label, attrs
             )
@@ -181,6 +202,7 @@ impl Store {
                 u.observed_at, u.ingested_at, u.source_id, u.entity_kind, u.entity_key,
                 CASE WHEN u.lon IS NULL OR u.lat IS NULL THEN NULL
                      ELSE ST_SetSRID(ST_MakePoint(u.lon, u.lat), 4326) END,
+                CASE WHEN u.geom IS NULL THEN NULL ELSE ST_GeomFromEWKB(u.geom) END,
                 u.alt_m, u.alt_datum,
                 u.course_deg, u.heading_deg, u.speed_mps, u.vrate_mps,
                 u.quality, u.label, u.attrs
@@ -188,12 +210,12 @@ impl Store {
                 $1::timestamptz[], $2::timestamptz[], $3::text[], $4::text[], $5::text[],
                 $6::float8[], $7::float8[], $8::float8[], $9::text[],
                 $10::real[], $11::real[], $12::real[], $13::real[],
-                $14::text[], $15::text[], $16::jsonb[]
+                $14::text[], $15::text[], $16::jsonb[], $17::bytea[]
             ) AS u(
                 observed_at, ingested_at, source_id, entity_kind, entity_key,
                 lon, lat, alt_m, alt_datum,
                 course_deg, heading_deg, speed_mps, vrate_mps,
-                quality, label, attrs
+                quality, label, attrs, geom
             )
             -- Re-polling an immutable event rewrites the same row; suppress it.
             -- See 0003_observation_dedupe.sql.
@@ -216,6 +238,7 @@ impl Store {
         .bind(&quality)
         .bind(&label)
         .bind(&attrs)
+        .bind(&geom)
         .execute(&mut *tx)
         .await?;
         let inserted = inserted.rows_affected();
@@ -229,7 +252,7 @@ impl Store {
             r#"
             INSERT INTO entities (
                 entity_kind, entity_key, source_id, layer_id, observed_at,
-                position, alt_m, alt_datum,
+                position, geom, alt_m, alt_datum,
                 course_deg, heading_deg, speed_mps, vrate_mps,
                 quality, label, attrs
             )
@@ -238,6 +261,7 @@ impl Store {
                 COALESCE(s.layer_id, u.source_id), u.observed_at,
                 CASE WHEN u.lon IS NULL OR u.lat IS NULL THEN NULL
                      ELSE ST_SetSRID(ST_MakePoint(u.lon, u.lat), 4326) END,
+                CASE WHEN u.geom IS NULL THEN NULL ELSE ST_GeomFromEWKB(u.geom) END,
                 u.alt_m, u.alt_datum,
                 u.course_deg, u.heading_deg, u.speed_mps, u.vrate_mps,
                 u.quality, u.label, u.attrs
@@ -245,12 +269,12 @@ impl Store {
                 $1::timestamptz[], $2::text[], $3::text[], $4::text[],
                 $5::float8[], $6::float8[], $7::float8[], $8::text[],
                 $9::real[], $10::real[], $11::real[], $12::real[],
-                $13::text[], $14::text[], $15::jsonb[]
+                $13::text[], $14::text[], $15::jsonb[], $16::bytea[]
             ) AS u(
                 observed_at, source_id, entity_kind, entity_key,
                 lon, lat, alt_m, alt_datum,
                 course_deg, heading_deg, speed_mps, vrate_mps,
-                quality, label, attrs
+                quality, label, attrs, geom
             )
             LEFT JOIN sources s ON s.source_id = u.source_id
             ORDER BY u.entity_kind, u.entity_key, u.observed_at DESC
@@ -268,7 +292,8 @@ impl Store {
                 vrate_mps   = EXCLUDED.vrate_mps,
                 quality     = EXCLUDED.quality,
                 label       = EXCLUDED.label,
-                attrs       = EXCLUDED.attrs
+                attrs       = EXCLUDED.attrs,
+                geom        = EXCLUDED.geom
             WHERE EXCLUDED.observed_at > entities.observed_at
             "#,
         )
@@ -287,6 +312,7 @@ impl Store {
         .bind(&quality)
         .bind(&label)
         .bind(&attrs)
+        .bind(&geom)
         .execute(&mut *tx)
         .await?;
 
@@ -316,11 +342,13 @@ impl Store {
                 r#"
                 SELECT entity_kind, entity_key, source_id, layer_id, observed_at,
                        ST_X(position) AS lon, ST_Y(position) AS lat,
+                       ST_AsGeoJSON(geom)::jsonb AS geom,
                        alt_m, alt_datum,
                        course_deg, heading_deg, speed_mps, vrate_mps,
                        quality, label, attrs
                 FROM entities
-                WHERE position && ST_MakeEnvelope($1, $2, $3, $4, 4326)
+                WHERE (position && ST_MakeEnvelope($1, $2, $3, $4, 4326)
+                       OR geom && ST_MakeEnvelope($1, $2, $3, $4, 4326))
                   AND ($5::text[] IS NULL OR layer_id = ANY($5))
                 ORDER BY observed_at DESC
                 LIMIT $6
@@ -363,6 +391,7 @@ impl Store {
                        COALESCE(s.layer_id, t.source_id) AS layer_id,
                        t.bucket AS observed_at,
                        ST_X(t.position) AS lon, ST_Y(t.position) AS lat,
+                       ST_AsGeoJSON(t.geom)::jsonb AS geom,
                        t.alt_m, t.alt_datum,
                        t.course_deg, t.heading_deg, t.speed_mps, t.vrate_mps,
                        t.quality, t.label,

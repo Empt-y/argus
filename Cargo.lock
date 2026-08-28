@@ -145,6 +145,7 @@ dependencies = [
  "chrono",
  "csv",
  "futures",
+ "geo-types",
  "governor",
  "quick-xml",
  "rand 0.8.8",

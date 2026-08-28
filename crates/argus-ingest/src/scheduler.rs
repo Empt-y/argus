@@ -193,16 +193,26 @@ pub fn next_delay(
     scaled.max(Duration::from_secs(1))
 }
 
-/// Spread the first poll of each source across its own interval.
+/// Ceiling on how long a source waits before its first poll.
 ///
-/// Without this, every source registered at startup fires simultaneously on
-/// every subsequent cycle — a thundering herd against a dozen upstreams, and a
-/// write spike into the same hypertable chunk.
+/// Spreading across the full cadence is the obvious approach and is wrong in
+/// practice: a source on a five-minute cadence, fourth of six, would sit idle
+/// for over three minutes after startup showing nothing at all. Thirty seconds
+/// still separates the sources enough to avoid a simultaneous burst, and
+/// differing cadences keep them apart from then on.
+const MAX_STARTUP_JITTER: Duration = Duration::from_secs(30);
+
+/// Spread the first poll of each source so they do not all fire at once.
+///
+/// Without this, every source registered at startup hits its upstream in the
+/// same instant — a thundering herd against a dozen providers, and a write
+/// spike into a single hypertable chunk.
 pub fn startup_jitter(interval: Duration, source_index: usize, source_count: usize) -> Duration {
     if source_count <= 1 {
         return Duration::ZERO;
     }
-    interval.mul_f64(source_index as f64 / source_count as f64)
+    let spread = interval.min(MAX_STARTUP_JITTER);
+    spread.mul_f64(source_index as f64 / source_count as f64)
 }
 
 /// Decide what a 403 actually meant.
@@ -460,12 +470,31 @@ mod tests {
     }
 
     #[test]
-    fn startup_jitter_spreads_sources_across_the_interval() {
-        let interval = Duration::from_secs(60);
-        assert_eq!(startup_jitter(interval, 0, 4), Duration::ZERO);
-        assert_eq!(startup_jitter(interval, 1, 4), Duration::from_secs(15));
-        assert_eq!(startup_jitter(interval, 3, 4), Duration::from_secs(45));
+    fn startup_jitter_spreads_sources_without_stalling_them() {
+        // A short cadence spreads across itself.
+        let short = Duration::from_secs(20);
+        assert_eq!(startup_jitter(short, 0, 4), Duration::ZERO);
+        assert_eq!(startup_jitter(short, 1, 4), Duration::from_secs(5));
+        assert_eq!(startup_jitter(short, 3, 4), Duration::from_secs(15));
         // A lone source has nothing to spread against.
-        assert_eq!(startup_jitter(interval, 0, 1), Duration::ZERO);
+        assert_eq!(startup_jitter(short, 0, 1), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_slow_source_does_not_sit_idle_for_minutes_before_its_first_poll() {
+        // Regression: spreading across the full cadence meant a 5-minute
+        // source, fourth of six, showed nothing for over three minutes after
+        // startup — which reads as a broken feed, not a staggered one.
+        let slow = Duration::from_secs(300);
+        for index in 0..6 {
+            let jitter = startup_jitter(slow, index, 6);
+            assert!(
+                jitter <= MAX_STARTUP_JITTER,
+                "source {index} waits {}s before its first poll",
+                jitter.as_secs()
+            );
+        }
+        // Still genuinely staggered, not collapsed to zero.
+        assert_ne!(startup_jitter(slow, 1, 6), startup_jitter(slow, 5, 6));
     }
 }

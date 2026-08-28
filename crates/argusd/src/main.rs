@@ -180,6 +180,12 @@ fn build_sources(
         ));
     }
 
+    if enabled("nws-alerts") {
+        sources.push(std::sync::Arc::new(
+            argus_ingest::sources::NwsAlerts::new(http.clone()),
+        ));
+    }
+
     // Flights are served by a chain rather than one provider. Both members are
     // keyless, unmetered and backed by independent receiver networks, so an
     // outage or a policy change at one costs nothing — which is not
