@@ -40,6 +40,12 @@ reqwest = { version = "0.12", default-features = false, features = [
     "gzip",
     "brotli",
     "stream",
+    # Resolve in-process rather than through glibc. A daemon polling ~30 hosts
+    # on 15-second cadences makes a great many lookups, and glibc walks
+    # /etc/resolv.conf serially — one blackholed nameserver listed first stalls
+    # every request for seconds before it falls back. hickory queries in
+    # parallel and caches, so a broken entry costs nothing.
+    "hickory-dns",
 ] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 

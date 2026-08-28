@@ -42,6 +42,67 @@ pub struct TrackPoint {
     pub speed_mps: Option<f32>,
 }
 
+/// A registered source and its current health.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct SourceRow {
+    pub source_id: String,
+    pub layer_id: String,
+    pub display_name: String,
+    pub entity_kind: String,
+    pub cost_class: String,
+    pub state: String,
+    pub state_since: DateTime<Utc>,
+    pub last_success: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub last_lag_ms: Option<i32>,
+    pub observations: i64,
+    pub attribution: serde_json::Value,
+}
+
+pub const fn cost_class_str(c: argus_core::CostClass) -> &'static str {
+    match c {
+        argus_core::CostClass::Free => "free",
+        argus_core::CostClass::Metered => "metered",
+        argus_core::CostClass::Local => "local",
+    }
+}
+
+/// Flatten a health value into the three columns `sources` stores it in.
+///
+/// The mapping is lossy on purpose — the database keeps what an operator or a
+/// client needs to render a status chip, not the full enum. The `state` strings
+/// must match the CHECK constraint in 0001_core.sql.
+pub fn health_columns(
+    health: &argus_core::SourceHealth,
+) -> (&'static str, Option<String>, Option<i32>) {
+    use argus_core::SourceHealth as H;
+    match health {
+        H::Live { .. } => ("live", None, None),
+        H::Delayed { lag, .. } => (
+            "delayed",
+            None,
+            // Saturate rather than wrap: a feed reporting a lag beyond ~24 days
+            // is broken, and a wrapped negative would read as a feed from the
+            // future.
+            Some(lag.num_milliseconds().clamp(0, i32::MAX as i64) as i32),
+        ),
+        H::Stale { last_error, .. } => ("stale", Some(last_error.clone()), None),
+        H::Degraded { reason, .. } => ("degraded", Some(reason.clone()), None),
+        H::KeyRequired { config_key } => (
+            "key_required",
+            Some(format!("set {config_key} to enable this source")),
+            None,
+        ),
+        H::HardwareAbsent { description } => (
+            "hardware_absent",
+            Some(format!("requires {description}")),
+            None,
+        ),
+        H::Unknown => ("unknown", None, None),
+        H::Failed { error, .. } => ("failed", Some(error.clone()), None),
+    }
+}
+
 pub const fn quality_str(q: Quality) -> &'static str {
     match q {
         Quality::Live => "live",

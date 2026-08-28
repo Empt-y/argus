@@ -83,7 +83,8 @@ async fn observations_round_trip_through_the_hypertable() {
         observation("def456", -97.70, 30.30, 20),
     ];
     let written = store.write_observations(&obs).await.expect("write");
-    assert_eq!(written, 2);
+    assert_eq!(written.inserted, 2);
+    assert_eq!(written.deduped, 0);
 
     let found = store
         .entities_in_bbox(BoundingBox::new(-98.0, 30.0, -97.0, 31.0), &[], 100)
@@ -178,7 +179,8 @@ async fn implausible_positions_are_rejected_before_they_reach_the_store() {
         .await
         .expect("write");
     // No position, no geometry, no attrs — nothing worth storing.
-    assert_eq!(written, 0);
+    assert_eq!(written.inserted, 0);
+    assert_eq!(written.skipped, 1);
 }
 
 #[tokio::test]
@@ -272,4 +274,45 @@ async fn a_stale_sample_is_not_dragged_forward_forever() {
         !found.iter().any(|r| r.entity_key == "gone01"),
         "a three-hour-old sample leaked into the present snapshot"
     );
+}
+
+#[tokio::test]
+async fn re_polling_an_immutable_event_does_not_rewrite_it() {
+    // Earthquakes keep the same observed_at forever, but the feed must still be
+    // re-polled because USGS revises magnitudes for hours. Without the dedupe
+    // index one 5-minute feed wrote ~74,000 identical rows a day.
+    let store = require_db!();
+    let quake = observation("quake1", -122.0, 38.0, 900);
+
+    let first = store.write_observations(std::slice::from_ref(&quake)).await.expect("first");
+    assert_eq!(first.inserted, 1);
+    assert_eq!(first.deduped, 0);
+
+    let second = store.write_observations(std::slice::from_ref(&quake)).await.expect("second");
+    assert_eq!(second.inserted, 0, "duplicate was rewritten");
+    assert_eq!(second.deduped, 1);
+    // A fully deduped poll is a healthy poll, not a rejected one.
+    assert_eq!(second.accepted(), 1);
+    assert_eq!(second.skipped, 0);
+
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM observations WHERE entity_key = 'quake1'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .expect("count");
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn a_moving_entity_is_never_deduped_away() {
+    // The dedupe key includes observed_at, which advances with every
+    // transponder return — so an aircraft's track must survive intact.
+    let store = require_db!();
+    let obs: Vec<_> = (0..5)
+        .map(|i| observation("mover", -97.0 - (i as f64) * 0.01, 30.0, 300 - i * 60))
+        .collect();
+    let written = store.write_observations(&obs).await.expect("write");
+    assert_eq!(written.inserted, 5);
+    assert_eq!(written.deduped, 0);
 }

@@ -24,6 +24,7 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 governor = { workspace = true }
+tokio-util = { workspace = true }
 rand = { workspace = true }
 csv = { workspace = true }
 quick-xml = { workspace = true }

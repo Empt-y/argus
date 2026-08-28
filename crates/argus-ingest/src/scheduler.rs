@@ -45,6 +45,13 @@ pub struct SourceState {
     pub health: SourceHealth,
     pub consecutive_failures: u32,
     pub total_observations: u64,
+    /// Set when a failure is one that retrying cannot fix — a rejected
+    /// credential, absent hardware. Tracked separately from `health` because
+    /// the two answer different questions: `health` is "what should a user
+    /// see", this is "should the scheduler keep trying". A source with no
+    /// cached value reads as `Failed` either way, but a network blip must not
+    /// be as final as a 401.
+    pub terminated: bool,
 }
 
 impl Default for SourceState {
@@ -55,6 +62,7 @@ impl Default for SourceState {
             health: SourceHealth::Unknown,
             consecutive_failures: 0,
             total_observations: 0,
+            terminated: false,
         }
     }
 }
@@ -65,6 +73,7 @@ impl SourceState {
         match outcome {
             Ok(o) => {
                 self.consecutive_failures = 0;
+                self.terminated = false;
                 self.total_observations += o.accepted;
                 self.health = if o.lag > DELAYED_THRESHOLD {
                     SourceHealth::Delayed {
@@ -84,6 +93,7 @@ impl SourceState {
             }
             Err(err) => {
                 self.consecutive_failures += 1;
+                self.terminated = !err.is_retryable();
                 self.health = match err {
                     // A rejected credential is not a transient fault, and
                     // hammering an upstream that has said no is how you get
@@ -111,11 +121,14 @@ impl SourceState {
     }
 
     /// Whether the scheduler should keep polling this source at all.
+    ///
+    /// Only genuinely unfixable conditions stop it. A transport failure — even
+    /// the very first poll after startup, when there is no cached value and the
+    /// health therefore reads `Failed` — is retried with backoff, because
+    /// otherwise one blip at boot silently disables a feed until the next
+    /// restart.
     pub fn should_continue(&self) -> bool {
-        !matches!(
-            self.health,
-            SourceHealth::Failed { .. } | SourceHealth::HardwareAbsent { .. }
-        )
+        !self.terminated
     }
 }
 
@@ -245,6 +258,7 @@ mod tests {
             health: SourceHealth::Unknown,
             consecutive_failures: n,
             total_observations: observations,
+            terminated: false,
         }
     }
 
@@ -320,6 +334,30 @@ mod tests {
         let mut never_answered = SourceState::default();
         never_answered.record(Err(&SourceError::Transport("timeout".into())));
         assert!(matches!(never_answered.health, SourceHealth::Failed { .. }));
+    }
+
+    #[test]
+    fn a_transport_failure_on_the_very_first_poll_is_retried_not_fatal() {
+        // Regression: a single DNS or network blip at startup used to leave the
+        // source reading `Failed` (correct — there is no cached value) and the
+        // scheduler treated that as terminal, silently disabling the feed until
+        // the daemon was restarted.
+        let mut state = SourceState::default();
+        state.record(Err(&SourceError::Transport("connect timed out".into())));
+        assert!(matches!(state.health, SourceHealth::Failed { .. }));
+        assert!(
+            state.should_continue(),
+            "a transient network failure must not permanently disable a source"
+        );
+
+        // And it recovers cleanly once the upstream answers.
+        state.record(Ok(PollOutcome {
+            accepted: 12,
+            rejected: 0,
+            lag: chrono::Duration::zero(),
+        }));
+        assert!(state.should_continue());
+        assert!(matches!(state.health, SourceHealth::Live { .. }));
     }
 
     #[test]

@@ -9,6 +9,24 @@
 use argus_core::source::SourceError;
 use std::time::Duration;
 
+/// Flatten an error and its causes into one line.
+///
+/// `reqwest`'s Display is only the outermost layer — "error sending request for
+/// url (...)" with the actual reason (DNS failure, TLS handshake, connection
+/// refused) one or more levels down. Logging just the top line sends whoever is
+/// debugging looking for a network outage when the real cause is a missing root
+/// certificate store.
+fn describe(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut out = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        out.push_str(": ");
+        out.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    out
+}
+
 /// Default ceiling on a response body. Deliberately generous — Overpass and
 /// STAC replies are genuinely large — but finite.
 pub const DEFAULT_MAX_BYTES: usize = 32 * 1024 * 1024;
@@ -29,13 +47,13 @@ impl HttpClient {
     pub fn new(timeout: Duration) -> Result<Self, SourceError> {
         let inner = reqwest::Client::builder()
             .timeout(timeout)
-            .connect_timeout(Duration::from_secs(10))
+            .connect_timeout(Duration::from_secs(15))
             // Several providers redirect between CDN hosts; a couple of hops is
             // normal, an unbounded chain is a loop.
             .redirect(reqwest::redirect::Policy::limited(4))
             .user_agent(USER_AGENT)
             .build()
-            .map_err(|e| SourceError::Transport(e.to_string()))?;
+            .map_err(|e| SourceError::Transport(describe(&e)))?;
         Ok(Self {
             inner,
             max_bytes: DEFAULT_MAX_BYTES,
@@ -56,7 +74,7 @@ impl HttpClient {
             .get(url)
             .send()
             .await
-            .map_err(|e| SourceError::Transport(e.to_string()))?;
+            .map_err(|e| SourceError::Transport(describe(&e)))?;
 
         let status = response.status();
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
@@ -91,7 +109,7 @@ impl HttpClient {
         let mut stream = response.bytes_stream();
         let mut buf: Vec<u8> = Vec::new();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| SourceError::Transport(e.to_string()))?;
+            let chunk = chunk.map_err(|e| SourceError::Transport(describe(&e)))?;
             // Check before extending, so a hostile or broken upstream cannot
             // push us one whole chunk past the limit.
             if buf.len() + chunk.len() > self.max_bytes {

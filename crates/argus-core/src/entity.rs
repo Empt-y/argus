@@ -57,6 +57,19 @@ impl EntityKind {
     pub const fn is_timeseries(self) -> bool {
         !matches!(self, Self::Feature)
     }
+
+    /// Whether an observation of this kind describes the world *now*, so that
+    /// the gap between `observed_at` and `ingested_at` measures feed staleness.
+    ///
+    /// For a tracked aircraft it does: a two-minute-old position means the feed
+    /// is two minutes behind. For an event it does not — an earthquake's
+    /// `observed_at` is when the ground moved, and a feed covering a rolling
+    /// 24 hours will always contain day-old events without being stale in any
+    /// sense. Measuring lag on those reports every quiet event feed as delayed
+    /// forever.
+    pub const fn reports_current_state(self) -> bool {
+        !matches!(self, Self::Event)
+    }
 }
 
 impl fmt::Display for EntityKind {
@@ -334,6 +347,17 @@ mod tests {
         assert!(!Position::surface(0.0, 91.0).is_plausible());
         assert!(!Position::surface(f64::NAN, 30.0).is_plausible());
         assert!(!Position::surface(1.0, f64::INFINITY).is_plausible());
+    }
+
+    #[test]
+    fn event_feeds_do_not_measure_staleness_by_observation_age() {
+        // Regression: the USGS feed covers a rolling 24 hours, so the oldest
+        // quake in it is always ~24h old. Treating that as feed lag reported a
+        // perfectly healthy source as permanently delayed.
+        assert!(!EntityKind::Event.reports_current_state());
+        assert!(EntityKind::Aircraft.reports_current_state());
+        assert!(EntityKind::Vessel.reports_current_state());
+        assert!(EntityKind::Satellite.reports_current_state());
     }
 
     #[test]

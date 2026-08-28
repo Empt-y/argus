@@ -92,3 +92,21 @@ sudo -u postgres createdb -O argus argus_test
 sudo -u postgres psql -d argus_test -c "CREATE EXTENSION postgis; CREATE EXTENSION timescaledb;"
 ARGUS_TEST_DATABASE_URL=postgres://argus@localhost/argus_test cargo test --workspace
 ```
+
+## DNS
+
+Argus resolves in-process via hickory rather than through glibc, because glibc
+walks `/etc/resolv.conf` serially: one blackholed nameserver listed first stalls
+*every* lookup for seconds before falling back. That was not hypothetical during
+development — `1.1.1.1` was unreachable on the build network and listed first,
+so each poll spent 5–15 s in DNS before timing out the connect.
+
+If lookups feel slow machine-wide, that is the shape of it. Check each
+nameserver individually rather than trusting that resolution "works":
+
+```sh
+for ns in $(awk '/^nameserver/{print $2}' /etc/resolv.conf); do
+  printf '%-40s ' "$ns"
+  timeout 5 getent ahosts example.com >/dev/null 2>&1 && echo ok || echo SLOW
+done
+```

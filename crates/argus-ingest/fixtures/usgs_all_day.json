@@ -1,0 +1,485 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": 4.4,
+    "place": "Fiji region",
+    "time": 1787913513879,
+    "updated": 1787915071040,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000tciy",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/us7000tciy.geojson",
+    "felt": null,
+    "cdi": null,
+    "mmi": null,
+    "alert": null,
+    "status": "reviewed",
+    "tsunami": 0,
+    "sig": 298,
+    "net": "us",
+    "code": "7000tciy",
+    "ids": ",us7000tciy,",
+    "sources": ",us,",
+    "types": ",origin,phase-data,",
+    "nst": 37,
+    "dmin": 4.582,
+    "rms": 0.76,
+    "gap": 136,
+    "magType": "mb",
+    "type": "earthquake",
+    "title": "M 4.4 - Fiji region"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -178.6454,
+     -21.1233,
+     535.422
+    ]
+   },
+   "id": "us7000tciy"
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": 4.9,
+    "place": "264 km WNW of Houma, Tonga",
+    "time": 1787871778920,
+    "updated": 1787872744040,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000tcgb",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/us7000tcgb.geojson",
+    "felt": null,
+    "cdi": null,
+    "mmi": null,
+    "alert": null,
+    "status": "reviewed",
+    "tsunami": 0,
+    "sig": 369,
+    "net": "us",
+    "code": "7000tcgb",
+    "ids": ",us7000tcgb,",
+    "sources": ",us,",
+    "types": ",origin,phase-data,",
+    "nst": 67,
+    "dmin": 4.777,
+    "rms": 0.89,
+    "gap": 39,
+    "magType": "mb",
+    "type": "earthquake",
+    "title": "M 4.9 - 264 km WNW of Houma, Tonga"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -177.6957,
+     -20.3798,
+     520.313
+    ]
+   },
+   "id": "us7000tcgb"
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": 4.4,
+    "place": "33 km NNW of Rabaul, Papua New Guinea",
+    "time": 1787874650176,
+    "updated": 1787876397040,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000tcgh",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/us7000tcgh.geojson",
+    "felt": null,
+    "cdi": null,
+    "mmi": null,
+    "alert": null,
+    "status": "reviewed",
+    "tsunami": 0,
+    "sig": 298,
+    "net": "us",
+    "code": "7000tcgh",
+    "ids": ",us7000tcgh,",
+    "sources": ",us,",
+    "types": ",origin,phase-data,",
+    "nst": 29,
+    "dmin": 0.293,
+    "rms": 0.71,
+    "gap": 124,
+    "magType": "mb",
+    "type": "earthquake",
+    "title": "M 4.4 - 33 km NNW of Rabaul, Papua New Guinea"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     152.0206,
+     -3.934,
+     267.472
+    ]
+   },
+   "id": "us7000tcgh"
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": 1.41,
+    "place": "2 km NNW of Madras, Oregon",
+    "time": 1787862850800,
+    "updated": 1787865800520,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/uw714089271",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/uw714089271.geojson",
+    "felt": null,
+    "cdi": null,
+    "mmi": null,
+    "alert": null,
+    "status": "reviewed",
+    "tsunami": 0,
+    "sig": 31,
+    "net": "uw",
+    "code": "714089271",
+    "ids": ",uw714089271,",
+    "sources": ",uw,",
+    "types": ",origin,phase-data,",
+    "nst": 6,
+    "dmin": 0.344,
+    "rms": 0.16,
+    "gap": 158,
+    "magType": "md",
+    "type": "explosion",
+    "title": "M 1.4 Explosion - 2 km NNW of Madras, Oregon"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -121.138166666667,
+     44.6553333333333,
+     -1.38
+    ]
+   },
+   "id": "uw714089271"
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": 2.98,
+    "place": "3 km NW of Little America, Wyoming",
+    "time": 1787909279920,
+    "updated": 1787925355800,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/uu80150926",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/uu80150926.geojson",
+    "felt": null,
+    "cdi": null,
+    "mmi": null,
+    "alert": null,
+    "status": "reviewed",
+    "tsunami": 0,
+    "sig": 137,
+    "net": "uu",
+    "code": "80150926",
+    "ids": ",uu80150926,",
+    "sources": ",uu,",
+    "types": ",origin,phase-data,",
+    "nst": 21,
+    "dmin": 0.1108,
+    "rms": 0.16,
+    "gap": 112,
+    "magType": "ml",
+    "type": "earthquake",
+    "title": "M 3.0 - 3 km NW of Little America, Wyoming"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -109.888833333333,
+     41.5596666666667,
+     -1.93
+    ]
+   },
+   "id": "uu80150926"
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": -0.14,
+    "place": "64 km ENE of Pedro Bay, Alaska",
+    "time": 1787881715740,
+    "updated": 1787947403420,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/av94406458",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/av94406458.geojson",
+    "felt": null,
+    "cdi": null,
+    "mmi": null,
+    "alert": null,
+    "status": "reviewed",
+    "tsunami": 0,
+    "sig": 0,
+    "net": "av",
+    "code": "94406458",
+    "ids": ",av94406458,",
+    "sources": ",av,",
+    "types": ",origin,phase-data,",
+    "nst": 7,
+    "dmin": 0.01191,
+    "rms": 0.33,
+    "gap": 102,
+    "magType": "ml",
+    "type": "earthquake",
+    "title": "M -0.1 - 64 km ENE of Pedro Bay, Alaska"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -153.076833333333,
+     60.0475,
+     -2.97
+    ]
+   },
+   "id": "av94406458"
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": 6,
+    "place": "145 km N of Caluula, Somalia",
+    "time": 1787864858352,
+    "updated": 1787886426040,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000tcf3",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/us7000tcf3.geojson",
+    "felt": null,
+    "cdi": null,
+    "mmi": 3.9,
+    "alert": "green",
+    "status": "reviewed",
+    "tsunami": 0,
+    "sig": 554,
+    "net": "us",
+    "code": "7000tcf3",
+    "ids": ",us7000tcf3,",
+    "sources": ",us,",
+    "types": ",ground-failure,losspager,moment-tensor,origin,phase-data,shakemap,",
+    "nst": 92,
+    "dmin": 6.114,
+    "rms": 0.88,
+    "gap": 27,
+    "magType": "mww",
+    "type": "earthquake",
+    "title": "M 6.0 - 145 km N of Caluula, Somalia"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     50.5425,
+     13.2654,
+     10
+    ]
+   },
+   "id": "us7000tcf3"
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": 5.2,
+    "place": "southeast Indian Ridge",
+    "time": 1787893146623,
+    "updated": 1787894074040,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000tchl",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/us7000tchl.geojson",
+    "felt": null,
+    "cdi": null,
+    "mmi": null,
+    "alert": null,
+    "status": "reviewed",
+    "tsunami": 0,
+    "sig": 416,
+    "net": "us",
+    "code": "7000tchl",
+    "ids": ",us7000tchl,",
+    "sources": ",us,",
+    "types": ",origin,phase-data,",
+    "nst": 34,
+    "dmin": 16.219,
+    "rms": 0.38,
+    "gap": 89,
+    "magType": "mb",
+    "type": "earthquake",
+    "title": "M 5.2 - southeast Indian Ridge"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     111.5852,
+     -50.116,
+     10
+    ]
+   },
+   "id": "us7000tchl"
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": 5,
+    "place": "172 km SE of Petropavlovsk-Kamchatsky, Russia",
+    "time": 1787908337255,
+    "updated": 1787909550040,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000tcii",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/us7000tcii.geojson",
+    "felt": null,
+    "cdi": null,
+    "mmi": null,
+    "alert": null,
+    "status": "reviewed",
+    "tsunami": 0,
+    "sig": 385,
+    "net": "us",
+    "code": "7000tcii",
+    "ids": ",us7000tcii,",
+    "sources": ",us,",
+    "types": ",origin,phase-data,",
+    "nst": 75,
+    "dmin": 2.057,
+    "rms": 0.98,
+    "gap": 111,
+    "magType": "mb",
+    "type": "earthquake",
+    "title": "M 5.0 - 172 km SE of Petropavlovsk-Kamchatsky, Russia"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     160.6615,
+     52.1245,
+     10
+    ]
+   },
+   "id": "us7000tcii"
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": 5,
+    "place": "109 km WNW of Isangel, Vanuatu",
+    "time": 1787905955971,
+    "updated": 1787909854073,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000tcig",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/us7000tcig.geojson",
+    "felt": 2,
+    "cdi": 2.7,
+    "mmi": null,
+    "alert": null,
+    "status": "reviewed",
+    "tsunami": 0,
+    "sig": 385,
+    "net": "us",
+    "code": "7000tcig",
+    "ids": ",us7000tcig,",
+    "sources": ",us,",
+    "types": ",dyfi,origin,phase-data,",
+    "nst": 36,
+    "dmin": 3.371,
+    "rms": 0.62,
+    "gap": 147,
+    "magType": "mb",
+    "type": "earthquake",
+    "title": "M 5.0 - 109 km WNW of Isangel, Vanuatu"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     168.2841,
+     -19.2675,
+     10
+    ]
+   },
+   "id": "us7000tcig"
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": 5,
+    "place": "19 km NW of Fuji, China",
+    "time": 1787894015070,
+    "updated": 1787895066040,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000tcht",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/us7000tcht.geojson",
+    "felt": null,
+    "cdi": null,
+    "mmi": null,
+    "alert": null,
+    "status": "reviewed",
+    "tsunami": 0,
+    "sig": 385,
+    "net": "us",
+    "code": "7000tcht",
+    "ids": ",us7000tcht,",
+    "sources": ",us,",
+    "types": ",origin,phase-data,",
+    "nst": 46,
+    "dmin": 6.786,
+    "rms": 0.83,
+    "gap": 36,
+    "magType": "mb",
+    "type": "earthquake",
+    "title": "M 5.0 - 19 km NW of Fuji, China"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     105.229,
+     29.2752,
+     10
+    ]
+   },
+   "id": "us7000tcht"
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "mag": 5,
+    "place": "northern East Pacific Rise",
+    "time": 1787884757518,
+    "updated": 1787886185040,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000tch3",
+    "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/us7000tch3.geojson",
+    "felt": null,
+    "cdi": null,
+    "mmi": null,
+    "alert": null,
+    "status": "reviewed",
+    "tsunami": 0,
+    "sig": 385,
+    "net": "us",
+    "code": "7000tch3",
+    "ids": ",us7000tch3,",
+    "sources": ",us,",
+    "types": ",origin,phase-data,",
+    "nst": 52,
+    "dmin": 10.261,
+    "rms": 0.65,
+    "gap": 194,
+    "magType": "mww",
+    "type": "earthquake",
+    "title": "M 5.0 - northern East Pacific Rise"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -103.4604,
+     8.4191,
+     10
+    ]
+   },
+   "id": "us7000tch3"
+  }
+ ]
+}

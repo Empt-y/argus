@@ -1,11 +1,14 @@
 //! Feed ingestion: the driver contract's runtime half.
 //!
 //! `argus_core` defines what a [`Source`](argus_core::Source) *is*; this crate
-//! decides when each one runs, enforces the guards they share, and turns poll
-//! outcomes into the honest health states clients display.
+//! decides when each one runs, enforces the guards they share, turns poll
+//! outcomes into honest health states, and writes the results into the DVR.
 
 pub mod http;
+pub mod runtime;
 pub mod scheduler;
+pub mod sources;
 
 pub use http::HttpClient;
+pub use runtime::{CredentialResolver, Runtime};
 pub use scheduler::{PollOutcome, SchedulerConfig, SourceState, next_delay, poll_once};

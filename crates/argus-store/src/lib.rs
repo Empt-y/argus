@@ -22,6 +22,30 @@ pub enum StoreError {
     MissingExtension(&'static str),
 }
 
+/// What a batch write actually did.
+///
+/// The three outcomes must stay distinguishable. A poll whose rows were all
+/// suppressed as already-known is perfectly healthy — a quiet event feed looks
+/// exactly like that — whereas rows dropped for being malformed are a real
+/// signal. Collapsing them into one number makes a calm feed report as broken.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WriteOutcome {
+    /// Rows new to the store.
+    pub inserted: u64,
+    /// Rows the store already held, suppressed by the dedupe index.
+    pub deduped: u64,
+    /// Readings discarded before the write: no position, no geometry, no
+    /// attributes, or a kind that is not time-series.
+    pub skipped: u64,
+}
+
+impl WriteOutcome {
+    /// Readings the store handled successfully, however it handled them.
+    pub fn accepted(&self) -> u64 {
+        self.inserted + self.deduped
+    }
+}
+
 /// A handle to the Argus database. Cheap to clone — it wraps a pool.
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -86,13 +110,17 @@ impl Store {
     pub async fn write_observations(
         &self,
         observations: &[Observation],
-    ) -> Result<u64, StoreError> {
+    ) -> Result<WriteOutcome, StoreError> {
         let rows: Vec<&Observation> = observations
             .iter()
             .filter(|o| o.is_meaningful() && o.entity.kind.is_timeseries())
             .collect();
+        let skipped = (observations.len() - rows.len()) as u64;
         if rows.is_empty() {
-            return Ok(0);
+            return Ok(WriteOutcome {
+                skipped,
+                ..Default::default()
+            });
         }
 
         let mut tx = self.pool.begin().await?;
@@ -141,7 +169,7 @@ impl Store {
         let label: Vec<Option<String>> = rows.iter().map(|o| o.label.clone()).collect();
         let attrs: Vec<serde_json::Value> = rows.iter().map(|o| o.attrs.clone()).collect();
 
-        sqlx::query(
+        let inserted = sqlx::query(
             r#"
             INSERT INTO observations (
                 observed_at, ingested_at, source_id, entity_kind, entity_key,
@@ -167,6 +195,9 @@ impl Store {
                 course_deg, heading_deg, speed_mps, vrate_mps,
                 quality, label, attrs
             )
+            -- Re-polling an immutable event rewrites the same row; suppress it.
+            -- See 0003_observation_dedupe.sql.
+            ON CONFLICT (entity_kind, entity_key, observed_at, source_id) DO NOTHING
             "#,
         )
         .bind(&observed_at)
@@ -187,6 +218,7 @@ impl Store {
         .bind(&attrs)
         .execute(&mut *tx)
         .await?;
+        let inserted = inserted.rows_affected();
 
         // Live state. `WHERE EXCLUDED.observed_at > entities.observed_at` is
         // load-bearing: batches can contain out-of-order samples, and two
@@ -259,7 +291,11 @@ impl Store {
         .await?;
 
         tx.commit().await?;
-        Ok(rows.len() as u64)
+        Ok(WriteOutcome {
+            inserted,
+            deduped: rows.len() as u64 - inserted,
+            skipped,
+        })
     }
 
     /// Everything currently inside a box.
@@ -379,6 +415,92 @@ impl Store {
         .bind(&entity.key)
         .bind(from)
         .bind(to)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Register a driver, or refresh its static metadata if it already exists.
+    ///
+    /// Health columns are deliberately untouched on conflict: a restart must not
+    /// reset a source's observation count or wipe the record of why it was
+    /// failing.
+    pub async fn register_source(
+        &self,
+        descriptor: &argus_core::SourceDescriptor,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            r#"
+            INSERT INTO sources (source_id, layer_id, display_name, entity_kind,
+                                 cost_class, attribution)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (source_id) DO UPDATE SET
+                layer_id     = EXCLUDED.layer_id,
+                display_name = EXCLUDED.display_name,
+                entity_kind  = EXCLUDED.entity_kind,
+                cost_class   = EXCLUDED.cost_class,
+                attribution  = EXCLUDED.attribution,
+                updated_at   = now()
+            "#,
+        )
+        .bind(descriptor.id.as_str())
+        .bind(descriptor.layer_id.as_str())
+        .bind(&descriptor.display_name)
+        .bind(descriptor.kind.as_str())
+        .bind(model::cost_class_str(descriptor.cost))
+        .bind(serde_json::to_value(&descriptor.attribution).unwrap_or_default())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Persist a source's current health so both clients can render it honestly.
+    ///
+    /// `state_since` only moves when the state actually changes — a feed that
+    /// has been stale for an hour should say so, not claim it went stale on the
+    /// most recent retry.
+    pub async fn update_source_health(
+        &self,
+        source_id: &argus_core::SourceId,
+        health: &argus_core::SourceHealth,
+        observations_delta: u64,
+    ) -> Result<(), StoreError> {
+        let (state, error, lag_ms) = model::health_columns(health);
+        sqlx::query(
+            r#"
+            UPDATE sources SET
+                state        = $2,
+                state_since  = CASE WHEN state IS DISTINCT FROM $2 THEN now() ELSE state_since END,
+                last_error   = $3,
+                last_lag_ms  = $4,
+                last_success = CASE WHEN $2 IN ('live', 'delayed', 'degraded')
+                                    THEN now() ELSE last_success END,
+                observations = observations + $5,
+                updated_at   = now()
+            WHERE source_id = $1
+            "#,
+        )
+        .bind(source_id.as_str())
+        .bind(state)
+        .bind(error)
+        .bind(lag_ms)
+        .bind(observations_delta as i64)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Every registered source with its current health, for `GET /v1/sources`.
+    pub async fn list_sources(&self) -> Result<Vec<model::SourceRow>, StoreError> {
+        let rows = sqlx::query_as::<_, model::SourceRow>(
+            r#"
+            SELECT source_id, layer_id, display_name, entity_kind, cost_class,
+                   state, state_since, last_success, last_error, last_lag_ms,
+                   observations, attribution
+            FROM sources
+            ORDER BY layer_id, source_id
+            "#,
+        )
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
