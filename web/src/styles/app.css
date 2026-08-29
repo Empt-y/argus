@@ -1,0 +1,115 @@
+/* Ground colours only. The sensor looks (CRT/NVG/FLIR/noir/snow) are
+   post-process stages on the Cesium scene, not CSS, and land separately. */
+:root {
+  --bg: #05070a;
+  --panel: #10151cdd;
+  --edge: #1f2933;
+  --text: #c9d5e1;
+  --dim: #7b8794;
+  --live: #6fcf97;
+  --warn: #f2994a;
+  --bad: #eb5757;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+}
+
+#globe { position: absolute; inset: 0; }
+
+#hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: auto 1fr auto;
+  gap: 12px;
+}
+
+.panel {
+  pointer-events: auto;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  padding: 10px 12px;
+  backdrop-filter: blur(6px);
+  max-height: 100%;
+  overflow: auto;
+}
+
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 600;
+}
+
+.chip {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+}
+.chip.live { color: var(--live); }
+.chip.delayed, .chip.degraded { color: var(--warn); }
+.chip.stale, .chip.failed { color: var(--bad); }
+/* A key that was never set is not a fault, and must not look like one. */
+.chip.key_required, .chip.hardware_absent, .chip.unknown { color: var(--dim); }
+
+.layer-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.layer-row.off { opacity: 0.4; }
+.layer-row .swatch {
+  width: 9px; height: 9px; border-radius: 2px;
+}
+.layer-row .count { color: var(--dim); font-size: 11px; }
+
+/* Cesium's own credit block advertises Cesium ion, which this client does not
+   use — the imagery is OpenStreetMap's. Leaving it would be a false
+   attribution, not merely a stray logo, so it is replaced by `.attrib` below
+   rather than simply hidden. */
+.cesium-widget-credits, .cesium-credit-logoContainer { display: none !important; }
+
+/* Bottom right, in its own grid cell. It was previously sharing row 3 column 2
+   with the DVR panel, which drew over it — and an OpenStreetMap credit that is
+   present in the DOM but invisible on screen does not satisfy the licence. */
+.attrib {
+  grid-column: 3;
+  grid-row: 3;
+  justify-self: end;
+  align-self: end;
+  font-size: 10px;
+  color: var(--dim);
+  pointer-events: auto;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+.attrib a { color: inherit; }
+
+/* The rail sizes to its content; a panel stretched down the viewport reads as
+   a load that never finished. */
+.rail { align-self: start; }
