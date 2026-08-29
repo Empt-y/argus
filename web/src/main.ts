@@ -7,22 +7,24 @@
  * broken on a slow link and is indistinguishable from one that is.
  */
 
-import { api, ApiError } from "./net/client";
-import { DeltaStream } from "./net/stream";
-import { createViewer, onCameraSettled, viewportBbox } from "./core/viewer";
-import { loadGeoid, geoidReady, undulationM, resolveHeight } from "./geo/datum";
-import { LayerRenderer } from "./layers/entities";
-import { LabelArbiter } from "./layers/labels";
-import type { ClientKeys, Entity, Layer } from "./net/types";
-import { Hud } from "./ui/hud";
-import { EntityCard } from "./ui/card";
-import { SensorStyles } from "./styles/sensors";
+import { api, ApiError } from "./net/client.ts";
+import { DeltaStream } from "./net/stream.ts";
+import { createViewer, onCameraSettled, viewportBbox } from "./core/viewer.ts";
+import { loadGeoid, geoidReady, undulationM, resolveHeight } from "./geo/datum.ts";
+import { LayerRenderer } from "./layers/entities.ts";
+import { LabelArbiter } from "./layers/labels.ts";
+import type { ClientKeys, Entity, Layer } from "./net/types.ts";
+import { Hud } from "./ui/hud.ts";
+import { EntityCard } from "./ui/card.ts";
+import { SensorStyles } from "./styles/sensors.ts";
 import { ScreenSpaceEventHandler, ScreenSpaceEventType } from "cesium";
 
 /** Contacts unheard-of for this long stop being drawn at all. */
 const EXPIRY_MS = 10 * 60_000;
 /** How often to sweep for them. */
 const EXPIRY_SWEEP_MS = 30_000;
+/** How often to drive a frame while contacts are moving. */
+const ANIMATION_INTERVAL_MS = 100;
 /** Camera settle delay before re-querying the viewport. */
 const CAMERA_SETTLE_MS = 350;
 
@@ -132,6 +134,18 @@ async function main(): Promise<void> {
   resubscribe();
 
   setInterval(() => renderer.expire(EXPIRY_MS), EXPIRY_SWEEP_MS);
+
+  // Animation cadence.
+  //
+  // `requestRenderMode` means a still map costs nothing, and that is worth
+  // keeping: this client is meant to be left open for days on a machine that is
+  // also running the ingest daemon. So the scene is only driven while something
+  // is actually moving, and at 10 Hz rather than 60 — smooth for contacts that
+  // cross a handful of pixels a second, and a sixth of the GPU cost of a
+  // continuous render loop.
+  setInterval(() => {
+    if (renderer.movingCount() > 0) viewer.scene.requestRender();
+  }, ANIMATION_INTERVAL_MS);
 
   // Health drives the honest status line: the point of the whole chain is that
   // a feed with no key does not look like a feed that is broken.

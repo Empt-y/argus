@@ -6,7 +6,7 @@
  * wrong.
  */
 
-import { ARGUS_BASE, deviceToken } from "../config";
+import { ARGUS_BASE, deviceToken } from "../config.ts";
 import type {
   ClientKeys,
   EntitiesResponse,
@@ -15,7 +15,7 @@ import type {
   Layer,
   Source,
   TrackResponse,
-} from "./types";
+} from "./types.ts";
 
 export class ApiError extends Error {
   constructor(

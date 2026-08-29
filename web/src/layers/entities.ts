@@ -30,12 +30,13 @@ import {
   VerticalOrigin,
   type Viewer,
 } from "cesium";
-import { resolveHeight } from "../geo/datum";
-import { screenRotation } from "../geo/heading";
-import { chevron } from "./icons";
-import { circleRing } from "../geo/spherical";
-import type { Entity, GeoJsonGeometry, Layer, Quality } from "../net/types";
-import { entityId } from "../net/types";
+import { resolveHeight } from "../geo/datum.ts";
+import { screenRotation } from "../geo/heading.ts";
+import { chevron } from "./icons.ts";
+import { circleRing } from "../geo/spherical.ts";
+import { isMovable, reckon, reckonedFor, MAX_COAST_MS } from "../geo/reckon.ts";
+import type { Entity, GeoJsonGeometry, Layer, Quality } from "../net/types.ts";
+import { entityId } from "../net/types.ts";
 
 /**
  * How solid a contact is drawn, by quality.
@@ -209,11 +210,22 @@ export class LayerRenderer {
     const existing = source.entities.getById(id);
     const target = existing ?? new CesiumEntity({ id });
 
-    target.position = Cartesian3.fromDegrees(
-      entity.lon,
-      entity.lat,
-      height.ellipsoidalM,
-    ) as never;
+    // A moving contact's position is evaluated per frame so it advances
+    // between reports instead of teleporting every fifteen seconds. Anything
+    // that does not move keeps a constant position, which is both cheaper and
+    // more honest — there is nothing to interpolate.
+    if (isMovable(entity)) {
+      target.position = new CallbackProperty(
+        () => this.#reckonedPosition(id, height.ellipsoidalM),
+        false,
+      ) as never;
+    } else {
+      target.position = Cartesian3.fromDegrees(
+        entity.lon,
+        entity.lat,
+        height.ellipsoidalM,
+      ) as never;
+    }
 
     // A layer that reports a course gets an oriented chevron; everything else
     // gets a dot. Drawing a direction the feed never supplied would be an
@@ -447,6 +459,58 @@ export class LayerRenderer {
       source.entities.removeById(part);
     }
     this.#parts.delete(id);
+  }
+
+  /**
+   * Where a moving contact should be drawn this frame.
+   *
+   * Falls back to the reported position whenever reckoning declines to answer,
+   * which is the safe direction: showing a contact where it was last actually
+   * seen is never wrong, only out of date.
+   */
+  #reckonedPosition(id: string, fallbackHeightM: number): Cartesian3 {
+    const entity = this.#entities.get(id);
+    if (!entity || entity.lon === null || entity.lat === null) {
+      return Cartesian3.fromDegrees(0, 0, 0);
+    }
+    const advanced = reckon(entity);
+    if (!advanced) {
+      return Cartesian3.fromDegrees(entity.lon, entity.lat, fallbackHeightM);
+    }
+    const height = resolveHeight(
+      advanced.altM,
+      entity.alt_datum,
+      advanced.lat,
+      advanced.lon,
+    );
+    return Cartesian3.fromDegrees(
+      advanced.lon,
+      advanced.lat,
+      height.basis === "unknown" ? fallbackHeightM : height.ellipsoidalM,
+    );
+  }
+
+  /**
+   * How many drawn contacts are currently moving.
+   *
+   * Drives whether the scene needs animating at all. With `requestRenderMode`
+   * on, a still map costs nothing; this is what decides when to start paying.
+   *
+   * Being movable is not enough: a contact past [`MAX_COAST_MS`] is pinned to
+   * its last fix and redrawing it changes nothing. Counting those too would
+   * hold the render loop open forever over a map where nothing can move —
+   * which is exactly the state a client left open overnight ends up in, and
+   * the state DVR playback of history is in from the first frame.
+   */
+  movingCount(): number {
+    let moving = 0;
+    for (const entity of this.#entities.values()) {
+      if (!this.#sources.get(entity.layer_id)?.show) continue;
+      if (!isMovable(entity)) continue;
+      const coasted = reckonedFor(entity);
+      if (coasted > 0 && coasted < MAX_COAST_MS) moving++;
+    }
+    return moving;
   }
 
   /** Colour for a contact right now: layer hue, quality alpha, age fade. */

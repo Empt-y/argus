@@ -9,8 +9,8 @@
  * gap rather than left to infer it.
  */
 
-import { ARGUS_BASE, deviceToken } from "../config";
-import type { Entity, ServerFrame } from "./types";
+import { ARGUS_BASE, deviceToken } from "../config.ts";
+import type { Entity, ServerFrame } from "./types.ts";
 
 export interface Subscription {
   bbox?: [number, number, number, number];

@@ -30,7 +30,7 @@
  * one of the two can be noticed.
  */
 
-import type { AltitudeDatum } from "../net/types";
+import type { AltitudeDatum } from "../net/types.ts";
 
 /** A height, and how much it should be trusted. */
 export interface ResolvedHeight {

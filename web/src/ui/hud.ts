@@ -11,10 +11,10 @@
  * the API, and this is the last place it can be thrown away.
  */
 
-import type { Layer, Source, SourceState } from "../net/types";
-import type { StreamStatus } from "../net/stream";
-import type { LayerRenderer } from "../layers/entities";
-import { SENSOR_STYLES, type SensorStyles } from "../styles/sensors";
+import type { Layer, Source, SourceState } from "../net/types.ts";
+import type { StreamStatus } from "../net/stream.ts";
+import type { LayerRenderer } from "../layers/entities.ts";
+import { SENSOR_STYLES, type SensorStyles } from "../styles/sensors.ts";
 
 /** How far back the scrubber reaches. Matches the `tracks_1m` retention. */
 const DVR_SPAN_MINUTES = 90 * 24 * 60;

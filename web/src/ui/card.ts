@@ -21,9 +21,10 @@ import {
   Entity as CesiumEntity,
   type Viewer,
 } from "cesium";
-import { api } from "../net/client";
-import { resolveHeight } from "../geo/datum";
-import type { Entity, Quality, TrackPoint } from "../net/types";
+import { api } from "../net/client.ts";
+import { resolveHeight } from "../geo/datum.ts";
+import { reckonedFor } from "../geo/reckon.ts";
+import type { Entity, Quality, TrackPoint } from "../net/types.ts";
 
 /** How much history to draw behind a selected contact. */
 const TRACK_HOURS = 2;
@@ -106,7 +107,17 @@ export class EntityCard {
 
     const rows: [string, string][] = [];
     if (entity.lat !== null && entity.lon !== null) {
-      rows.push(["position", `${entity.lat.toFixed(4)}, ${entity.lon.toFixed(4)}`]);
+      // The reported fix, always — not the reckoned one. The card is the place
+      // someone goes to find out what is actually known, and a dead-reckoned
+      // number presented as a position would defeat the point of showing it.
+      const coasted = reckonedFor(entity);
+      rows.push([
+        "position",
+        `${entity.lat.toFixed(4)}, ${entity.lon.toFixed(4)}` +
+          (coasted > 1000
+            ? ` (drawn +${Math.round(coasted / 1000)}s dead-reckoned)`
+            : ""),
+      ]);
     }
     if (entity.alt_m !== null) {
       // Show the conversion only when there was one. A feed already reporting

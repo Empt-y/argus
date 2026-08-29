@@ -7,13 +7,15 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "cesium": "^1.126.0",
     "egm96-universal": "^1.1.0"
   },
   "devDependencies": {
+    "@types/node": "^26.4.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
     "vite-plugin-cesium": "^1.2.23"

@@ -30,7 +30,7 @@ import {
   Terrain,
   Viewer,
 } from "cesium";
-import type { ClientKeys } from "../net/types";
+import type { ClientKeys } from "../net/types.ts";
 
 export interface ViewerBundle {
   viewer: Viewer;
