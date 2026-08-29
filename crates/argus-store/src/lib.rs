@@ -301,6 +301,17 @@ impl Store {
         // sources can describe the same aircraft at different lags. Without the
         // guard, a late-arriving stale fix overwrites a newer one and the
         // contact visibly jumps backwards.
+        //
+        // The second clause exists because that guard, alone, is too strict for
+        // immutable events. A weather alert's `observed_at` is the moment the
+        // office issued it and never advances, so an alert first seen without a
+        // polygon — which is 94% of them, since NWS issues by zone id — could
+        // never gain one on a later poll once the zone boundaries had been
+        // resolved. It was frozen shapeless for its whole life. So an update at
+        // the *same* instant is accepted when, and only when, it strictly adds
+        // geometry the stored row does not have. That cannot resurrect a stale
+        // position, because it changes nothing about a row that already has a
+        // shape.
         sqlx::query(
             r#"
             INSERT INTO entities (
@@ -348,6 +359,9 @@ impl Store {
                 attrs       = EXCLUDED.attrs,
                 geom        = EXCLUDED.geom
             WHERE EXCLUDED.observed_at > entities.observed_at
+               OR (EXCLUDED.observed_at = entities.observed_at
+                   AND entities.geom IS NULL
+                   AND EXCLUDED.geom IS NOT NULL)
             "#,
         )
         .bind(&observed_at)

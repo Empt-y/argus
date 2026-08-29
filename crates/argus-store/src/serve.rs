@@ -236,3 +236,49 @@ impl Store {
         Ok(out)
     }
 }
+
+/// The store as a geometry cache.
+///
+/// See `argus_core::cache` for why this is an implementation of a narrow trait
+/// rather than drivers being handed a `Store`: a driver that can reach the
+/// database can invent its own persistence, and then nobody knows where the
+/// data lives.
+#[async_trait::async_trait]
+impl argus_core::GeometryCache for Store {
+    async fn get(&self, key: &str) -> Option<geo_types::Geometry<f64>> {
+        let row: Option<(geozero::wkb::Decode<geo_types::Geometry<f64>>,)> =
+            sqlx::query_as("SELECT geom FROM reference_geometry WHERE cache_key = $1")
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await
+                .unwrap_or_else(|err| {
+                    // A cache that cannot be read is not a reason to fail a
+                    // poll; the driver will fetch instead, which is exactly
+                    // what it would do on a miss.
+                    tracing::warn!(key, "reference geometry lookup failed: {err}");
+                    None
+                });
+        row.and_then(|(decoded,)| decoded.geometry)
+    }
+
+    async fn put(&self, key: &str, geometry: &geo_types::Geometry<f64>) {
+        use geozero::ToWkb;
+        let Ok(bytes) = geometry.to_ewkb(geozero::CoordDimensions::xy(), Some(4326)) else {
+            tracing::warn!(key, "reference geometry could not be encoded; not cached");
+            return;
+        };
+        if let Err(err) = sqlx::query(
+            "INSERT INTO reference_geometry (cache_key, geom)
+             VALUES ($1, ST_GeomFromEWKB($2))
+             ON CONFLICT (cache_key) DO UPDATE
+               SET geom = EXCLUDED.geom, fetched_at = now()",
+        )
+        .bind(key)
+        .bind(&bytes)
+        .execute(&self.pool)
+        .await
+        {
+            tracing::warn!(key, "could not cache reference geometry: {err}");
+        }
+    }
+}

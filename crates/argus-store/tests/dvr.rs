@@ -419,3 +419,103 @@ async fn a_shape_is_found_by_a_box_that_misses_its_label_anchor() {
         "polygon was missed because the query only matched its anchor point"
     );
 }
+
+#[tokio::test]
+async fn an_immutable_event_can_still_gain_a_shape_it_was_missing() {
+    // The failure this pins: a weather alert's `observed_at` is its issue time
+    // and never advances, so the ordinary "only accept something newer" guard
+    // meant an alert first seen without a polygon stayed shapeless for life.
+    // 94% of NWS alerts arrive that way, their geometry only resolvable from
+    // zone ids on a later poll.
+    let (store, _db) = require_db!();
+    let issued = Utc::now() - Duration::minutes(5);
+
+    let bare = Observation::new(
+        SourceId::new("test-adsb"),
+        EntityId::new(argus_core::EntityKind::Event, "alert-1"),
+        issued,
+        Quality::Live,
+    )
+    .with_attrs(serde_json::json!({ "event": "Small Craft Advisory" }));
+    store.write_observations(&[bare]).await.expect("write bare");
+
+    let found = store
+        .entity(&EntityId::new(argus_core::EntityKind::Event, "alert-1"))
+        .await
+        .expect("query")
+        .expect("the alert exists");
+    assert!(found.geom.is_none(), "starts with no shape");
+
+    // Same instant, same alert, now with the zone geometry resolved.
+    let shaped = Observation::new(
+        SourceId::new("test-adsb"),
+        EntityId::new(argus_core::EntityKind::Event, "alert-1"),
+        issued,
+        Quality::Live,
+    )
+    .with_attrs(serde_json::json!({ "event": "Small Craft Advisory" }))
+    .with_geom(geo_types::Geometry::Polygon(geo_types::Polygon::new(
+        geo_types::LineString(vec![
+            geo_types::Coord { x: -98.0, y: 30.0 },
+            geo_types::Coord { x: -97.0, y: 30.0 },
+            geo_types::Coord { x: -97.0, y: 31.0 },
+            geo_types::Coord { x: -98.0, y: 30.0 },
+        ]),
+        vec![],
+    )));
+    store.write_observations(&[shaped]).await.expect("write shaped");
+
+    let found = store
+        .entity(&EntityId::new(argus_core::EntityKind::Event, "alert-1"))
+        .await
+        .expect("query")
+        .expect("the alert still exists");
+    assert!(
+        found.geom.is_some(),
+        "an alert must be able to gain the shape it was issued with"
+    );
+}
+
+#[tokio::test]
+async fn enrichment_cannot_resurrect_a_stale_position() {
+    // The other half of the rule: same-instant updates are accepted only when
+    // they ADD geometry. A row that already has a shape must stay put, or the
+    // relaxation would reopen the stale-overwrite hole it sits next to.
+    let (store, _db) = require_db!();
+    let at = Utc::now() - Duration::minutes(1);
+    let square = |x: f64| {
+        geo_types::Geometry::Polygon(geo_types::Polygon::new(
+            geo_types::LineString(vec![
+                geo_types::Coord { x, y: 30.0 },
+                geo_types::Coord { x: x + 1.0, y: 30.0 },
+                geo_types::Coord { x: x + 1.0, y: 31.0 },
+                geo_types::Coord { x, y: 30.0 },
+            ]),
+            vec![],
+        ))
+    };
+    let event = |geom, lon: f64| {
+        Observation::new(
+            SourceId::new("test-adsb"),
+            EntityId::new(argus_core::EntityKind::Event, "alert-2"),
+            at,
+            Quality::Live,
+        )
+        .with_position(Position::surface(lon, 30.5))
+        .with_geom(geom)
+    };
+
+    store.write_observations(&[event(square(-98.0), -97.5)]).await.expect("first");
+    store.write_observations(&[event(square(-50.0), -49.5)]).await.expect("second");
+
+    let found = store
+        .entity(&EntityId::new(argus_core::EntityKind::Event, "alert-2"))
+        .await
+        .expect("query")
+        .expect("exists");
+    assert!(
+        (found.lon.expect("a position") + 97.5).abs() < 0.01,
+        "a row that already had a shape must not be overwritten at the same instant, got {:?}",
+        found.lon
+    );
+}

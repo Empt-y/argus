@@ -109,7 +109,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut runtime = runtime.with_aois(aois);
 
-    for source in build_sources(&config, &http) {
+    for source in build_sources(&config, &http, std::sync::Arc::new(api_store.clone())) {
         runtime.register(source);
     }
 
@@ -205,6 +205,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn build_sources(
     config: &Config,
     http: &argus_ingest::HttpClient,
+    zone_cache: std::sync::Arc<dyn argus_core::GeometryCache>,
 ) -> Vec<std::sync::Arc<dyn argus_core::Source>> {
     let enabled = |id: &str| {
         config
@@ -233,8 +234,12 @@ fn build_sources(
     }
 
     if enabled("nws-alerts") {
+        // The store backs the zone cache, so the few hundred county and marine
+        // outlines this driver needs are fetched once in the life of the
+        // deployment rather than once per restart.
         sources.push(std::sync::Arc::new(
-            argus_ingest::sources::NwsAlerts::new(http.clone()),
+            argus_ingest::sources::NwsAlerts::new(http.clone())
+                .with_zone_cache(zone_cache.clone()),
         ));
     }
 

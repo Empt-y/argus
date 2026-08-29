@@ -169,6 +169,7 @@ name = "argus-store"
 version = "0.1.0"
 dependencies = [
  "argus-core",
+ "async-trait",
  "chrono",
  "geo-types",
  "geozero",

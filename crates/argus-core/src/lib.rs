@@ -5,12 +5,14 @@
 //! or HTTP dependency is deliberate: it is the one place where a change ripples
 //! everywhere, so it should be cheap to read and cheap to test.
 
+pub mod cache;
 pub mod entity;
 pub mod geo;
 pub mod layer;
 pub mod orbital;
 pub mod source;
 
+pub use cache::{GeometryCache, MemoryGeometryCache};
 pub use entity::{
     AltitudeDatum, EntityId, EntityKind, Kinematics, Observation, Position, Quality,
 };
