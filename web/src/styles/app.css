@@ -113,3 +113,29 @@ html, body {
 /* The rail sizes to its content; a panel stretched down the viewport reads as
    a load that never finished. */
 .rail { align-self: start; }
+
+.card {
+  grid-column: 3;
+  grid-row: 2;
+  align-self: start;
+  min-width: 20rem;
+  max-width: 24rem;
+  position: relative;
+}
+.card h2 { margin-right: 20px; color: var(--text); font-size: 13px; text-transform: none; letter-spacing: 0; }
+.card-close {
+  position: absolute; top: 6px; right: 8px;
+  background: none; border: 0; color: var(--dim);
+  font-size: 16px; line-height: 1; cursor: pointer;
+}
+.card-close:hover { color: var(--text); }
+.card-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.card-rows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+.card-rows dt { color: var(--dim); }
+.card-rows dd { margin: 0; overflow-wrap: anywhere; }

@@ -29,6 +29,8 @@ import {
   type Viewer,
 } from "cesium";
 import { resolveHeight } from "../geo/datum";
+import { screenRotation } from "../geo/heading";
+import { chevron } from "./icons";
 import type { Entity, GeoJsonGeometry, Layer, Quality } from "../net/types";
 import { entityId } from "../net/types";
 
@@ -55,6 +57,7 @@ export class LayerRenderer {
   readonly #sources = new Map<string, CustomDataSource>();
   readonly #layers = new Map<string, Layer>();
   readonly #entities = new Map<string, Entity>();
+  readonly #rotations = new Map<string, number>();
   #selected: string | null = null;
 
   constructor(private readonly viewer: Viewer) {}
@@ -87,6 +90,7 @@ export class LayerRenderer {
   replaceAll(entities: Entity[]): void {
     for (const source of this.#sources.values()) source.entities.removeAll();
     this.#entities.clear();
+    this.#rotations.clear();
     this.upsert(entities);
   }
 
@@ -111,6 +115,7 @@ export class LayerRenderer {
       if (age > olderThanMs) {
         this.#sources.get(entity.layer_id)?.entities.removeById(id);
         this.#entities.delete(id);
+        this.#rotations.delete(id);
         removed++;
       }
     }
@@ -177,6 +182,36 @@ export class LayerRenderer {
       height.ellipsoidalM,
     ) as never;
 
+    // A layer that reports a course gets an oriented chevron; everything else
+    // gets a dot. Drawing a direction the feed never supplied would be an
+    // invention, and one a viewer would have no way to see through.
+    if (layer.style.rotates_with_course) {
+      target.point = undefined;
+      target.billboard = {
+        image: chevron(layer.style.color) as never,
+        scale: new CallbackProperty(
+          () => (this.#selected === id ? 0.75 : 0.5),
+          false,
+        ) as never,
+        color: new CallbackProperty(
+          () => this.#shade(id, Color.WHITE),
+          false,
+        ) as never,
+        rotation: new CallbackProperty(
+          () => this.#rotation(id, target),
+          false,
+        ) as never,
+        // Zero aligned-axis means the quad faces the camera and `rotation` is
+        // a plain screen-space angle, which is exactly what `screenRotation`
+        // computes.
+        alignedAxis: Cartesian3.ZERO as never,
+      } as never;
+      this.#label(target, entity, color);
+      if (!existing) source.entities.add(target);
+      return;
+    }
+
+    target.billboard = undefined;
     target.point = {
       pixelSize: new CallbackProperty(
         () => (this.#selected === id ? 13 : 7),
@@ -200,26 +235,56 @@ export class LayerRenderer {
       disableDepthTestDistance: 0 as never,
     } as never;
 
-    if (entity.label) {
-      target.label = {
-        text: entity.label as never,
-        font: "500 12px ui-monospace, monospace" as never,
-        fillColor: color as never,
-        style: LabelStyle.FILL_AND_OUTLINE as never,
-        outlineColor: Color.BLACK as never,
-        outlineWidth: 3 as never,
-        horizontalOrigin: HorizontalOrigin.LEFT as never,
-        verticalOrigin: VerticalOrigin.BOTTOM as never,
-        pixelOffset: new Cartesian2(10, -6) as never,
-        // Visibility belongs to the arbiter (see `labels.ts`), which decides
-        // per frame in screen space. A distance cut-off cannot do that job:
-        // the problem is density, not range, and three hundred contacts are
-        // just as unreadable at ten kilometres as at a thousand.
-        show: false as never,
-      } as never;
-    }
-
+    this.#label(target, entity, color);
     if (!existing) source.entities.add(target);
+  }
+
+  #label(target: CesiumEntity, entity: Entity, color: Color): void {
+    if (!entity.label) return;
+    target.label = {
+      text: entity.label as never,
+      font: "500 12px ui-monospace, monospace" as never,
+      fillColor: color as never,
+      style: LabelStyle.FILL_AND_OUTLINE as never,
+      outlineColor: Color.BLACK as never,
+      outlineWidth: 3 as never,
+      horizontalOrigin: HorizontalOrigin.LEFT as never,
+      verticalOrigin: VerticalOrigin.BOTTOM as never,
+      pixelOffset: new Cartesian2(10, -6) as never,
+      // Visibility belongs to the arbiter (see `labels.ts`), which decides per
+      // frame in screen space. A distance cut-off cannot do that job: the
+      // problem is density, not range, and three hundred contacts are just as
+      // unreadable at ten kilometres as at a thousand.
+      show: false as never,
+    } as never;
+  }
+
+  /**
+   * Screen rotation for a contact, remembered between frames.
+   *
+   * The memory is not an optimisation: `screenRotation` returns the previous
+   * value when the projection is degenerate, and without somewhere to keep it
+   * the icon would snap to zero — reading as "now flying north" — every time a
+   * contact turned to face the camera.
+   */
+  #rotation(id: string, target: CesiumEntity): number {
+    const entity = this.#entities.get(id);
+    if (!entity) return 0;
+    const position = target.position?.getValue(this.viewer.clock.currentTime);
+    if (!position) return this.#rotations.get(id) ?? 0;
+    // Course is where it is going; heading is where the nose points. Course is
+    // what a track icon should follow — in a crosswind an aircraft's nose is
+    // several degrees off its actual path, and the icon should trace the path.
+    const course = entity.course_deg ?? entity.heading_deg;
+    const next = screenRotation(
+      this.viewer.scene,
+      position,
+      course,
+      this.#rotations.get(id) ?? null,
+    );
+    if (next === null) return this.#rotations.get(id) ?? 0;
+    this.#rotations.set(id, next);
+    return next;
   }
 
   #drawShape(

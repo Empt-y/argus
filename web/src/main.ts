@@ -15,6 +15,8 @@ import { LayerRenderer } from "./layers/entities";
 import { LabelArbiter } from "./layers/labels";
 import type { ClientKeys, Entity, Layer } from "./net/types";
 import { Hud } from "./ui/hud";
+import { EntityCard } from "./ui/card";
+import { ScreenSpaceEventHandler, ScreenSpaceEventType } from "cesium";
 
 /** Contacts unheard-of for this long stop being drawn at all. */
 const EXPIRY_MS = 10 * 60_000;
@@ -95,6 +97,32 @@ async function main(): Promise<void> {
     });
   };
 
+  // Click to inspect. `scene.pick` returns the drawn primitive; its entity id
+  // is the same `kind:key` the renderer stored it under, so the lookup needs no
+  // second index.
+  const card = new EntityCard(viewer, hudRoot);
+  const picker = new ScreenSpaceEventHandler(viewer.canvas);
+  picker.setInputAction((movement: { position: unknown }) => {
+    const picked = viewer.scene.pick(movement.position as never);
+    const id = picked?.id?.id ?? picked?.id;
+    if (typeof id !== "string") {
+      renderer.select(null);
+      card.close();
+      return;
+    }
+    // Shape and track entities carry decorated ids (`id#0`, `id~0`); the
+    // contact they belong to is the part before the decoration.
+    const base = id.split(/[#~]/)[0] ?? id;
+    const entity = renderer.entity(base);
+    if (!entity) {
+      renderer.select(null);
+      card.close();
+      return;
+    }
+    renderer.select(base);
+    void card.show(entity);
+  }, ScreenSpaceEventType.LEFT_CLICK);
+
   hud.onSelectionChange(resubscribe);
   onCameraSettled(viewer, CAMERA_SETTLE_MS, resubscribe);
   resubscribe();
@@ -116,7 +144,7 @@ async function main(): Promise<void> {
   // Exposed for the console and for the headless smoke test. Not a public
   // interface — nothing in the client reads it.
   Object.assign(window, {
-    argus: { viewer, renderer, stream, api, geo: { loadGeoid, geoidReady, undulationM, resolveHeight } },
+    argus: { viewer, renderer, stream, api, card, geo: { loadGeoid, geoidReady, undulationM, resolveHeight } },
   });
 }
 
