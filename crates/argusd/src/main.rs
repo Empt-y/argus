@@ -154,6 +154,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             client_keys: argus_api::ClientKeys {
                 google_maps_api_key: config.client_keys.google_maps_api_key.clone(),
                 cesium_ion_token: config.client_keys.cesium_ion_token.clone(),
+                buildings_tileset_url: config.client.buildings_tileset_url.clone(),
             },
             public_url: config.server.public_url(),
         },

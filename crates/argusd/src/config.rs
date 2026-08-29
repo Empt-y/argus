@@ -39,6 +39,8 @@ pub struct Config {
     pub retention: RetentionConfig,
     #[serde(default)]
     pub client_keys: ClientKeys,
+    #[serde(default)]
+    pub client: ClientConfig,
     /// Areas where capture runs at full cadence.
     #[serde(default, rename = "aoi")]
     pub aois: Vec<AoiConfig>,
@@ -168,6 +170,25 @@ pub struct ClientKeys {
     pub google_maps_api_key: Option<String>,
     #[serde(default)]
     pub cesium_ion_token: Option<String>,
+}
+
+/// Client-side scene configuration that is *not* secret.
+///
+/// Kept apart from [`ClientKeys`] on purpose. Those two values are credentials
+/// that happen to have to reach a browser; these are just settings, and the
+/// distinction is worth preserving in the type so nobody later assumes
+/// everything the client is told is sensitive.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientConfig {
+    /// A 3D Tiles tileset of buildings, or `None` to draw none.
+    ///
+    /// Defaults to the Re:Earth Buildings community service, which is global,
+    /// ODbL, and needs no key. It publishes no SLA, so point this at a mirror
+    /// rather than depending on it — that the URL is configurable at all is the
+    /// whole reason this setting exists.
+    #[serde(default)]
+    pub buildings_tileset_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

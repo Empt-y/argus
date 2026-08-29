@@ -27,6 +27,8 @@ export class Hud {
   readonly #scrubLabel: HTMLElement;
   readonly #notes: HTMLElement;
   readonly #sensorBar: HTMLElement;
+  readonly #scenePanel: HTMLElement;
+  readonly #attrib: HTMLElement;
 
   #enabled = new Set<string>();
   #renderer: LayerRenderer | null = null;
@@ -39,6 +41,8 @@ export class Hud {
       <div class="panel rail" style="grid-column:1;grid-row:1/span 2;max-height:calc(100vh - 24px)">
         <h2>Layers</h2>
         <div data-layers></div>
+        <h2 style="margin-top:12px">Scene</h2>
+        <div data-scene></div>
         <h2 style="margin-top:12px">Sources</h2>
         <div data-sources></div>
       </div>
@@ -53,7 +57,7 @@ export class Hud {
                value="0" step="1" style="width:100%" />
         <div class="sensors" data-sensors></div>
       </div>
-      <div class="attrib">Imagery ©&nbsp;<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors · CesiumJS</div>
+      <div class="attrib" data-attrib>Imagery ©&nbsp;<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors · CesiumJS</div>
     `;
     this.#status = root.querySelector("[data-status]")!;
     this.#notes = root.querySelector("[data-notes]")!;
@@ -62,6 +66,8 @@ export class Hud {
     this.#scrubber = root.querySelector("[data-scrub]")!;
     this.#scrubLabel = root.querySelector("[data-scrublabel]")!;
     this.#sensorBar = root.querySelector("[data-sensors]")!;
+    this.#scenePanel = root.querySelector("[data-scene]")!;
+    this.#attrib = root.querySelector("[data-attrib]")!;
 
     this.#scrubber.addEventListener("input", () => {
       this.#minutesBack = -Number(this.#scrubber.value);
@@ -111,6 +117,50 @@ export class Hud {
     for (const layer of layers) this.#enabled.add(layer.id);
     for (const layer of layers) renderer.setLayerVisible(layer.id, true);
     this.#renderLayers();
+  }
+
+  /**
+   * A scene-wide toggle, for things that are not entity layers.
+   *
+   * Kept in the same rail as the layers because the distinction between "a
+   * feed of contacts" and "part of the scene" matters to the code and not at
+   * all to whoever is looking at the map.
+   */
+  addSceneToggle(
+    label: string,
+    initial: boolean,
+    onChange: (on: boolean) => void,
+    title?: string,
+  ): void {
+    let on = initial;
+    const row = document.createElement("div");
+    const name = document.createElement("span");
+    name.textContent = label;
+    const state = document.createElement("span");
+    state.className = "count";
+    const paint = () => {
+      row.className = `layer-row${on ? "" : " off"}`;
+      state.textContent = on ? "on" : "off";
+    };
+    row.append(name, state);
+    if (title) row.title = title;
+    row.addEventListener("click", () => {
+      on = !on;
+      paint();
+      onChange(on);
+    });
+    paint();
+    this.#scenePanel.append(row);
+  }
+
+  /**
+   * Add a required credit. Licences like ODbL are a condition of use, not a
+   * courtesy, so this appends rather than replaces.
+   */
+  addAttribution(text: string): void {
+    const span = document.createElement("span");
+    span.textContent = ` · ${text}`;
+    this.#attrib.append(span);
   }
 
   setSources(sources: Source[]): void {

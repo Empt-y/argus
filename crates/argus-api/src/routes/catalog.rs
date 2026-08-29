@@ -89,6 +89,9 @@ pub async fn layers(State(state): State<ApiState>) -> ApiResult<Json<LayersRespo
 pub struct ClientKeysResponse {
     pub google_maps_api_key: Option<String>,
     pub cesium_ion_token: Option<String>,
+    /// The 3D buildings tileset, if one is configured. Not secret; see
+    /// [`argus_api::ClientKeys`].
+    pub buildings_tileset_url: Option<String>,
 }
 
 pub async fn client_keys(
@@ -99,5 +102,6 @@ pub async fn client_keys(
     Json(ClientKeysResponse {
         google_maps_api_key: state.config.client_keys.google_maps_api_key.clone(),
         cesium_ion_token: state.config.client_keys.cesium_ion_token.clone(),
+        buildings_tileset_url: state.config.client_keys.buildings_tileset_url.clone(),
     })
 }

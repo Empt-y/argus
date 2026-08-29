@@ -130,6 +130,8 @@ export interface Health {
 export interface ClientKeys {
   google_maps_api_key: string | null;
   cesium_ion_token: string | null;
+  /** A 3D Tiles buildings tileset, or `null` to draw none. Not a credential. */
+  buildings_tileset_url: string | null;
 }
 
 export interface TrackPoint {

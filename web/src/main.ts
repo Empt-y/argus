@@ -12,6 +12,7 @@ import { DeltaStream } from "./net/stream.ts";
 import { createViewer, onCameraSettled, viewportBbox } from "./core/viewer.ts";
 import { loadGeoid, geoidReady, undulationM, resolveHeight } from "./geo/datum.ts";
 import { LayerRenderer } from "./layers/entities.ts";
+import { Buildings, BUILDINGS_ATTRIBUTION } from "./layers/buildings.ts";
 import { LabelArbiter } from "./layers/labels.ts";
 import type { ClientKeys, Entity, Layer } from "./net/types.ts";
 import { Hud } from "./ui/hud.ts";
@@ -54,6 +55,28 @@ async function main(): Promise<void> {
   const labels = new LabelArbiter(viewer);
   hud.setPhotoreal(photoreal);
   if (!terrain) hud.note("flat ellipsoid — no Cesium ion token configured");
+
+  // Buildings are scene furniture, not a feed: they are loaded once and never
+  // updated, so a slow or missing tileset must not hold up the contacts.
+  void Buildings.load(viewer.scene, keys?.buildings_tileset_url).then(
+    ({ buildings, error }) => {
+      if (error) {
+        hud.note(`buildings unavailable — ${error}`);
+        return;
+      }
+      if (!buildings.available) return;
+      hud.addAttribution(BUILDINGS_ATTRIBUTION);
+      hud.addSceneToggle(
+        "3D buildings",
+        true,
+        (on) => buildings.setShow(on),
+        // The rail is too narrow to carry the caveat, but the caveat still has
+        // to be somewhere a viewer can find it before trusting a height.
+        "Estimated heights — plausible massing, not survey data. " +
+          BUILDINGS_ATTRIBUTION,
+      );
+    },
+  );
   const sensors = new SensorStyles(viewer);
   hud.setSensorStyles(sensors);
 

@@ -28,6 +28,10 @@ use tower_http::cors::CorsLayer;
 pub struct ClientKeys {
     pub google_maps_api_key: Option<String>,
     pub cesium_ion_token: Option<String>,
+    /// Not a credential — a plain URL, carried here because it reaches the
+    /// client through the same request and a second round trip for one string
+    /// would be silly.
+    pub buildings_tileset_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
