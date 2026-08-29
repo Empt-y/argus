@@ -214,3 +214,59 @@ mod tests {
         assert_eq!(parse_entity_kind("submarine"), None);
     }
 }
+
+/// A layer as the registry knows it: several sources may feed one.
+///
+/// `state` is the *best* state among the layer's sources, because that is what
+/// the layer can actually deliver — a chain whose primary is down but whose
+/// fallback is answering is a live layer, and reporting it as stale because one
+/// member is stale would be a lie in the pessimistic direction.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct LayerRow {
+    pub layer_id: String,
+    pub entity_kind: String,
+    pub display_name: String,
+    pub state: String,
+    pub source_ids: Vec<String>,
+    pub last_success: Option<DateTime<Utc>>,
+    pub observations: i64,
+    pub attribution: serde_json::Value,
+    /// Live entities currently held for this layer. Zero with a healthy state
+    /// is a real answer (an empty sky), not a fault.
+    pub live_entities: i64,
+}
+
+/// One feature on its way into a vector tile.
+///
+/// Deliberately narrower than [`EntityRow`]: `attrs` is excluded. A tile is a
+/// rendering payload, and shipping every source's raw JSON blob into one would
+/// multiply its size for data no renderer reads. Clients that want the full
+/// record fetch it by key.
+#[derive(Debug, sqlx::FromRow)]
+pub struct TileRow {
+    pub entity_kind: String,
+    pub entity_key: String,
+    pub source_id: String,
+    pub layer_id: String,
+    pub observed_at: DateTime<Utc>,
+    pub geometry: geozero::wkb::Decode<geo_types::Geometry<f64>>,
+    pub alt_m: Option<f64>,
+    pub course_deg: Option<f32>,
+    pub heading_deg: Option<f32>,
+    pub speed_mps: Option<f32>,
+    pub vrate_mps: Option<f32>,
+    pub quality: String,
+    pub label: Option<String>,
+}
+
+/// A paired client. The token itself is not here and cannot be recovered — only
+/// its hash was ever stored.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct DeviceRow {
+    pub device_id: uuid::Uuid,
+    pub name: String,
+    pub scopes: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    pub last_seen_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+}

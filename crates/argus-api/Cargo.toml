@@ -28,3 +28,12 @@ uuid = { workspace = true }
 futures = { workspace = true }
 base64 = { workspace = true }
 rand = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+argus-core = { workspace = true }
+sqlx = { workspace = true }
+geozero = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true }

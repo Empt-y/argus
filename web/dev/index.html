@@ -1,0 +1,134 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Argus tile check</title>
+<!--
+  A scratch page, not the web client.
+
+  Its only job is the Phase 3 verification gate: prove that what `argus-tiles`
+  encodes is something a real MapLibre renders, before a line of Kotlin is
+  written against it. The Android client consumes exactly these tiles through
+  MapLibre Native, so if this page draws, that one will.
+
+  Serve it from an origin the daemon allows, because the API's CORS policy is
+  deliberately not permissive:
+
+      python3 -m http.server 5173 -d web/dev
+      # then open http://localhost:5173/
+-->
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
+/>
+<style>
+  html, body { margin: 0; height: 100%; background: #0d1117; }
+  #map { position: absolute; inset: 0; }
+  #hud {
+    position: absolute; z-index: 1; top: 8px; left: 8px; padding: 10px 12px;
+    background: #161b22ee; color: #c9d1d9; border: 1px solid #30363d;
+    border-radius: 6px; font: 12px/1.5 ui-monospace, monospace; max-width: 22rem;
+  }
+  #hud input[type="range"] { width: 100%; }
+  #hud .err { color: #f85149; }
+  #hud b { color: #58a6ff; }
+</style>
+<div id="hud">
+  <div><b>Argus</b> tile check &mdash; <span id="status">connecting…</span></div>
+  <div id="layers"></div>
+  <label>
+    DVR: <span id="when">live</span>
+    <input id="scrub" type="range" min="-180" max="0" value="0" step="1" />
+  </label>
+  <div>minutes back &mdash; 0 is live</div>
+</div>
+<div id="map"></div>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+  const SERVER = localStorage.getItem("argus.server") || "http://127.0.0.1:8787";
+  const TOKEN = localStorage.getItem("argus.token") || "";
+
+  const status = document.getElementById("status");
+  const layersEl = document.getElementById("layers");
+  const scrub = document.getElementById("scrub");
+  const whenEl = document.getElementById("when");
+
+  const auth = (url) => (TOKEN ? url + (url.includes("?") ? "&" : "?") + "token=" + TOKEN : url);
+  const api = (path) =>
+    fetch(auth(SERVER + path), TOKEN ? {} : {}).then((r) => {
+      if (!r.ok) throw new Error(path + " → " + r.status);
+      return r.json();
+    });
+
+  let map;
+  let minutesBack = 0;
+
+  // The scrubber changes one query parameter and nothing else. That is the
+  // whole claim being tested: a client gets time travel by appending `at`.
+  function applyTime() {
+    if (!map) return;
+    const at =
+      minutesBack === 0
+        ? null
+        : new Date(Date.now() - minutesBack * 60_000).toISOString();
+    whenEl.textContent = at ? at.replace("T", " ").slice(0, 19) + "Z" : "live";
+
+    for (const [id, source] of Object.entries(map.getStyle().sources)) {
+      if (source.type !== "vector") continue;
+      const base = source.tiles[0].split("?")[0];
+      const params = [];
+      if (TOKEN) params.push("token=" + TOKEN);
+      if (at) params.push("at=" + encodeURIComponent(at));
+      map.getSource(id).setTiles([base + (params.length ? "?" + params.join("&") : "")]);
+    }
+  }
+
+  scrub.addEventListener("input", () => {
+    minutesBack = -Number(scrub.value);
+    applyTime();
+  });
+
+  (async () => {
+    try {
+      const health = await api("/v1/health");
+      const catalog = await api("/v1/layers");
+      status.textContent = `up ${health.uptime_seconds}s · ${catalog.layers.length} layers`;
+      layersEl.innerHTML = catalog.layers
+        .map(
+          (l) =>
+            `<div><span style="color:${l.style.color}">■</span> ${l.id} ` +
+            `<i>${l.state}</i> · ${l.live_entities}</div>`
+        )
+        .join("");
+
+      const style = await api("/v1/style.json");
+      // A dark ground so the tiles are visible without a basemap; the real
+      // clients bring their own.
+      style.layers.unshift({
+        id: "backdrop",
+        type: "background",
+        paint: { "background-color": "#0d1117" },
+      });
+      if (TOKEN) {
+        for (const source of Object.values(style.sources)) {
+          source.tiles = source.tiles.map(auth);
+        }
+      }
+
+      map = new maplibregl.Map({
+        container: "map",
+        style,
+        center: [-1.0, 51.75],
+        zoom: 6,
+      });
+      map.addControl(new maplibregl.NavigationControl());
+
+      map.on("click", (e) => {
+        const hits = map.queryRenderedFeatures(e.point);
+        if (hits.length) console.log("feature", hits[0].properties);
+      });
+      map.on("error", (e) => console.warn("maplibre:", e.error?.message ?? e));
+    } catch (err) {
+      status.innerHTML = `<span class="err">${err.message}</span>`;
+      console.error(err);
+    }
+  })();
+</script>

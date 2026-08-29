@@ -16,7 +16,7 @@ use argus_core::entity::{
 };
 use argus_core::geo::BoundingBox;
 use argus_core::source::SourceId;
-use argus_store::Store;
+use argus_store::{EntityFilter, Store};
 use chrono::{Duration, Utc};
 
 async fn store() -> Option<Store> {
@@ -87,7 +87,7 @@ async fn observations_round_trip_through_the_hypertable() {
     assert_eq!(written.deduped, 0);
 
     let found = store
-        .entities_in_bbox(BoundingBox::new(-98.0, 30.0, -97.0, 31.0), &[], 100)
+        .entities_in_bbox(BoundingBox::new(-98.0, 30.0, -97.0, 31.0), &EntityFilter::default(), 100)
         .await
         .expect("query");
     assert_eq!(found.len(), 2);
@@ -120,7 +120,7 @@ async fn a_late_arriving_stale_fix_cannot_overwrite_a_newer_one() {
         .expect("stale write");
 
     let found = store
-        .entities_in_bbox(BoundingBox::new(-98.0, 30.0, -97.0, 31.0), &[], 100)
+        .entities_in_bbox(BoundingBox::new(-98.0, 30.0, -97.0, 31.0), &EntityFilter::default(), 100)
         .await
         .expect("query");
     let row = found.iter().find(|r| r.entity_key == "jump01").expect("found");
@@ -145,7 +145,7 @@ async fn out_of_order_samples_within_one_batch_still_settle_on_the_newest() {
         .expect("write");
 
     let found = store
-        .entities_in_bbox(BoundingBox::new(-98.0, 30.0, -97.0, 31.0), &[], 100)
+        .entities_in_bbox(BoundingBox::new(-98.0, 30.0, -97.0, 31.0), &EntityFilter::default(), 100)
         .await
         .expect("query");
     let row = found.iter().find(|r| r.entity_key == "batch1").expect("found");
@@ -196,7 +196,7 @@ async fn antimeridian_queries_return_both_sides() {
         .expect("write");
 
     let found = store
-        .entities_in_bbox(BoundingBox::new(170.0, -20.0, -170.0, -10.0), &[], 100)
+        .entities_in_bbox(BoundingBox::new(170.0, -20.0, -170.0, -10.0), &EntityFilter::default(), 100)
         .await
         .expect("query");
     let keys: Vec<&str> = found.iter().map(|r| r.entity_key.as_str()).collect();
@@ -229,7 +229,7 @@ async fn the_dvr_answers_where_things_were_at_a_past_instant() {
 
     let bbox = BoundingBox::new(-98.0, 30.0, -97.0, 31.0);
     let past = store
-        .entities_at(bbox, then + Duration::minutes(1), &[], 100)
+        .entities_at(bbox, then + Duration::minutes(1), &EntityFilter::default(), 100)
         .await
         .expect("historical query");
     let row = past
@@ -243,7 +243,7 @@ async fn the_dvr_answers_where_things_were_at_a_past_instant() {
     );
 
     // And the live view still shows the newer one.
-    let now = store.entities_in_bbox(bbox, &[], 100).await.expect("live");
+    let now = store.entities_in_bbox(bbox, &EntityFilter::default(), 100).await.expect("live");
     let live = now.iter().find(|r| r.entity_key == "dvr001").expect("live row");
     assert!((live.position().unwrap().lon - -97.60).abs() < 1e-9);
 }
@@ -265,7 +265,7 @@ async fn a_stale_sample_is_not_dragged_forward_forever() {
         .entities_at(
             BoundingBox::new(-98.0, 30.0, -97.0, 31.0),
             Utc::now(),
-            &[],
+            &EntityFilter::default(),
             100,
         )
         .await
@@ -348,7 +348,7 @@ async fn polygons_survive_the_round_trip_as_geometry() {
     assert_eq!(store.write_observations(&[obs]).await.expect("write").inserted, 1);
 
     let found = store
-        .entities_in_bbox(BoundingBox::new(-98.0, 29.0, -95.0, 32.0), &[], 100)
+        .entities_in_bbox(BoundingBox::new(-98.0, 29.0, -95.0, 32.0), &EntityFilter::default(), 100)
         .await
         .expect("query");
     let row = found
@@ -393,7 +393,7 @@ async fn a_shape_is_found_by_a_box_that_misses_its_label_anchor() {
 
     // A box over the western end only: contains the polygon, not the anchor.
     let found = store
-        .entities_in_bbox(BoundingBox::new(-99.5, 30.2, -99.0, 30.8), &[], 100)
+        .entities_in_bbox(BoundingBox::new(-99.5, 30.2, -99.0, 30.8), &EntityFilter::default(), 100)
         .await
         .expect("query");
     assert!(

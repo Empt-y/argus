@@ -7,6 +7,7 @@
 
 pub mod entity;
 pub mod geo;
+pub mod layer;
 pub mod orbital;
 pub mod source;
 
@@ -14,6 +15,7 @@ pub use entity::{
     AltitudeDatum, EntityId, EntityKind, Kinematics, Observation, Position, Quality,
 };
 pub use geo::{BoundingBox, TileCoord};
+pub use layer::{GeometryClass, LayerStyle};
 pub use source::{
     Attribution, AuthRequirement, Cadence, CostClass, Coverage, LayerId, PollCtx, Source,
     SourceDescriptor, SourceError, SourceHealth, SourceId, StreamSource,

@@ -78,6 +78,9 @@ geozero = { version = "0.14", features = ["with-postgis-sqlx", "with-mvt", "with
 sgp4 = "2"
 
 # --- misc ---
+sha2 = "0.10"
+hex = "0.4"
+qrcode = { version = "0.14", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 async-trait = "0.1"

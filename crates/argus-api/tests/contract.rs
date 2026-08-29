@@ -1,0 +1,510 @@
+//! Contract tests for every endpoint, against a real database.
+//!
+//! Run with:
+//!   ARGUS_TEST_DATABASE_URL=postgres://argus@localhost/argus_test cargo test -p argus-api
+//!
+//! Skipped (not failed) when that variable is unset, so `cargo test --workspace`
+//! stays green on a machine with no database.
+//!
+//! These go through the assembled `Router` rather than calling handlers
+//! directly. The auth layer, the path patterns and the status codes are as much
+//! of the contract as the JSON is, and a test that bypasses the router proves
+//! none of them.
+
+use argus_api::{ApiConfig, ApiState, AuthMode};
+use argus_core::entity::{EntityId, Kinematics, Observation, Position, Quality};
+use argus_core::source::SourceId;
+use argus_store::Store;
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use chrono::{Duration, Utc};
+use serde_json::Value;
+use tower::ServiceExt;
+
+const LOOPBACK: std::net::SocketAddr = std::net::SocketAddr::new(
+    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+    50_000,
+);
+const REMOTE: std::net::SocketAddr = std::net::SocketAddr::new(
+    std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 50)),
+    50_000,
+);
+
+async fn state(auth: AuthMode) -> Option<ApiState> {
+    let url = std::env::var("ARGUS_TEST_DATABASE_URL").ok()?;
+    let store = Store::connect(&url, 4).await.expect("connect to test database");
+    store.migrate().await.expect("migrations apply");
+    sqlx::query("TRUNCATE observations, entities, sources, devices CASCADE")
+        .execute(store.pool())
+        .await
+        .expect("truncate");
+    sqlx::query(
+        "INSERT INTO sources (source_id, layer_id, display_name, entity_kind,
+                              cost_class, state, last_success, observations)
+         VALUES ('test-adsb', 'flights', 'Test ADS-B', 'aircraft', 'free',
+                 'live', now(), 3)",
+    )
+    .execute(store.pool())
+    .await
+    .expect("seed source");
+
+    seed_aircraft(&store).await;
+
+    Some(ApiState::new(
+        store,
+        ApiConfig {
+            auth,
+            public_url: "http://argus.test:8787".into(),
+            ..ApiConfig::default()
+        },
+    ))
+}
+
+/// Three aircraft over the same patch of Texas, one of them a minute old.
+async fn seed_aircraft(store: &Store) {
+    let now = Utc::now();
+    let observations: Vec<Observation> = [
+        ("a1b2c3", -97.74, 30.27, 0),
+        ("d4e5f6", -97.70, 30.30, 0),
+        ("999999", -96.60, 30.20, 60),
+    ]
+    .iter()
+    .map(|(key, lon, lat, age)| {
+        Observation::new(
+            SourceId::new("test-adsb"),
+            EntityId::aircraft(key),
+            now - Duration::seconds(*age),
+            Quality::Live,
+        )
+        .with_position(Position {
+            lon: *lon,
+            lat: *lat,
+            alt_m: Some(10_000.0),
+            datum: argus_core::entity::AltitudeDatum::Barometric,
+        })
+        .with_kinematics(Kinematics {
+            course_deg: Some(271.0),
+            heading_deg: None,
+            ground_speed_mps: Some(230.0),
+            vertical_rate_mps: None,
+        })
+        .with_label(format!("FLT{key}"))
+    })
+    .collect();
+    store
+        .write_observations(&observations)
+        .await
+        .expect("seed observations");
+}
+
+async fn get(state: &ApiState, uri: &str, peer: std::net::SocketAddr) -> (StatusCode, Vec<u8>) {
+    send(
+        state,
+        Request::builder().uri(uri).body(Body::empty()).unwrap(),
+        peer,
+    )
+    .await
+}
+
+async fn send(
+    state: &ApiState,
+    mut request: Request<Body>,
+    peer: std::net::SocketAddr,
+) -> (StatusCode, Vec<u8>) {
+    // The router expects connect info, which a oneshot request has no socket to
+    // supply; injecting it is how the loopback exemption gets exercised at all.
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer));
+    let response = argus_api::router(state.clone())
+        .oneshot(request)
+        .await
+        .expect("router responds");
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024)
+        .await
+        .expect("body")
+        .to_vec();
+    (status, body)
+}
+
+fn json(body: &[u8]) -> Value {
+    serde_json::from_slice(body).expect("response should be JSON")
+}
+
+#[tokio::test]
+async fn health_answers_without_a_token_from_anywhere() {
+    let Some(state) = state(AuthMode::Required).await else {
+        return;
+    };
+    // Even under Required: telling a wrong address apart from a down server has
+    // to be possible before a device is paired.
+    let (status, body) = get(&state, "/v1/health", REMOTE).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json(&body)["status"], "ok");
+    assert_eq!(json(&body)["loopback_exempt"], false);
+}
+
+#[tokio::test]
+async fn a_remote_caller_without_a_token_is_refused() {
+    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let (status, body) = get(&state, "/v1/entities", REMOTE).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(json(&body)["error"]["code"], "unauthorized");
+
+    // ... and the same request from this machine is allowed through.
+    let (status, _) = get(&state, "/v1/entities", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn loopback_is_not_exempt_when_the_policy_says_required() {
+    let Some(state) = state(AuthMode::Required).await else {
+        return;
+    };
+    let (status, _) = get(&state, "/v1/entities", LOOPBACK).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_paired_device_token_is_accepted_and_a_revoked_one_is_not() {
+    let Some(state) = state(AuthMode::Required).await else {
+        return;
+    };
+    let code = state.pairing.issue();
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/pair")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({ "code": code, "name": "test phone" }).to_string(),
+        ))
+        .unwrap();
+    let (status, body) = send(&state, request, REMOTE).await;
+    assert_eq!(status, StatusCode::OK);
+    let paired = json(&body);
+    let token = paired["token"].as_str().expect("a token").to_string();
+    assert_eq!(token.len(), 64);
+
+    let with_token = |uri: &str| {
+        Request::builder()
+            .uri(uri.to_string())
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let (status, _) = send(&state, with_token("/v1/entities"), REMOTE).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The same code must not pair a second device: a photograph of the console
+    // is otherwise a permanent key.
+    let replay = Request::builder()
+        .method("POST")
+        .uri("/v1/pair")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({ "code": code, "name": "attacker" }).to_string(),
+        ))
+        .unwrap();
+    let (status, _) = send(&state, replay, REMOTE).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Revoke, and the token stops working immediately.
+    let device_id = paired["device_id"].as_str().unwrap();
+    let revoke = Request::builder()
+        .method("DELETE")
+        .uri(format!("/v1/devices/{device_id}"))
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(&state, revoke, REMOTE).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, _) = send(&state, with_token("/v1/entities"), REMOTE).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_token_in_the_query_string_works_for_clients_that_cannot_set_headers() {
+    let Some(state) = state(AuthMode::Required).await else {
+        return;
+    };
+    let issued = state
+        .store
+        .create_device("maplibre", &["read".to_string()])
+        .await
+        .expect("device");
+    let (status, _) = get(
+        &state,
+        &format!("/v1/tiles/flights/6/14/26?token={}", issued.token),
+        REMOTE,
+    )
+    .await;
+    assert!(
+        status == StatusCode::OK || status == StatusCode::NO_CONTENT,
+        "got {status}"
+    );
+}
+
+#[tokio::test]
+async fn a_read_only_device_cannot_mint_a_pairing_code() {
+    let Some(state) = state(AuthMode::Required).await else {
+        return;
+    };
+    let issued = state
+        .store
+        .create_device("wall display", &["read".to_string()])
+        .await
+        .expect("device");
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/pair/code")
+        .header("authorization", format!("Bearer {}", issued.token))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(&state, request, REMOTE).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn entities_answers_a_viewport_and_reports_whether_it_truncated() {
+    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let (status, body) = get(
+        &state,
+        "/v1/entities?bbox=-98,30,-97,31&layers=flights",
+        LOOPBACK,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&body);
+    assert_eq!(body["live"], true);
+    assert_eq!(body["count"], 2, "the third aircraft is outside the box");
+    assert_eq!(body["truncated"], false);
+    assert_eq!(body["entities"][0]["layer_id"], "flights");
+
+    // A limit that bites must say so rather than quietly presenting a partial
+    // view as an empty sky.
+    let (_, body) = get(
+        &state,
+        "/v1/entities?bbox=-98,30,-97,31&layers=flights&limit=1",
+        LOOPBACK,
+    )
+    .await;
+    assert_eq!(json(&body)["truncated"], true);
+}
+
+#[tokio::test]
+async fn a_kind_filter_and_a_layer_filter_both_apply() {
+    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let (_, body) = get(&state, "/v1/entities?kinds=aircraft", LOOPBACK).await;
+    assert_eq!(json(&body)["count"], 3);
+    let (_, body) = get(&state, "/v1/entities?kinds=vessel", LOOPBACK).await;
+    assert_eq!(json(&body)["count"], 0);
+    let (_, body) = get(&state, "/v1/entities?layers=nothing-here", LOOPBACK).await;
+    assert_eq!(json(&body)["count"], 0);
+}
+
+#[tokio::test]
+async fn a_malformed_viewport_is_a_client_error_naming_the_problem() {
+    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    for (uri, needle) in [
+        ("/v1/entities?bbox=1,2,3", "four values"),
+        ("/v1/entities?bbox=-2,52,0.5,51", "latitudes"),
+        ("/v1/entities?kinds=submarine", "submarine"),
+        ("/v1/entities?at=yesterday", "RFC 3339"),
+    ] {
+        let (status, body) = get(&state, uri, LOOPBACK).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+        let message = json(&body)["error"]["message"].as_str().unwrap().to_string();
+        assert!(message.contains(needle), "{uri} said: {message}");
+    }
+}
+
+#[tokio::test]
+async fn an_entity_detail_and_its_track_resolve_by_natural_key() {
+    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let (status, body) = get(&state, "/v1/entities/aircraft/a1b2c3", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&body);
+    assert_eq!(body["entity_key"], "a1b2c3");
+    assert_eq!(body["quality"], "live");
+    assert!(body["attrs"].is_object());
+
+    let (status, body) = get(&state, "/v1/entities/aircraft/a1b2c3/track", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    // The rollup that backs a track is materialised on a timer, so a track
+    // taken seconds after the write is legitimately empty. What is asserted
+    // here is the contract, not the content.
+    assert!(json(&body)["points"].is_array());
+
+    let (status, _) = get(&state, "/v1/entities/aircraft/nope", LOOPBACK).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, _) = get(&state, "/v1/entities/submarine/nope", LOOPBACK).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_backwards_track_window_is_refused() {
+    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let (status, _) = get(
+        &state,
+        "/v1/entities/aircraft/a1b2c3/track\
+         ?from=2026-01-02T00:00:00Z&to=2026-01-01T00:00:00Z",
+        LOOPBACK,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn sources_and_layers_report_health_honestly() {
+    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let (status, body) = get(&state, "/v1/sources", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json(&body)["sources"][0]["source_id"], "test-adsb");
+
+    let (status, body) = get(&state, "/v1/layers", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    let layer = &json(&body)["layers"][0];
+    assert_eq!(layer["id"], "flights");
+    assert_eq!(layer["state"], "live");
+    assert_eq!(layer["live_entities"], 3);
+    // The style hints are what let a client draw a layer it has never heard of.
+    assert_eq!(layer["style"]["geometry"], "point");
+    assert_eq!(layer["style"]["rotates_with_course"], true);
+    assert!(layer["style"]["color"].as_str().unwrap().starts_with('#'));
+}
+
+#[tokio::test]
+async fn a_tile_over_the_seeded_aircraft_contains_them() {
+    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let coord = tile_for(-97.74, 30.27, 8);
+    let (status, body) = get(
+        &state,
+        &format!("/v1/tiles/flights/{}/{}/{}", coord.0, coord.1, coord.2),
+        LOOPBACK,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    use geozero::mvt::Message;
+    let tile = geozero::mvt::Tile::decode(body.as_slice()).expect("valid MVT");
+    assert_eq!(tile.layers.len(), 1);
+    assert_eq!(tile.layers[0].name, "flights");
+    assert!(!tile.layers[0].features.is_empty());
+    assert!(tile.layers[0].keys.iter().any(|k| k == "quality"));
+}
+
+#[tokio::test]
+async fn an_empty_tile_is_a_204_rather_than_a_404() {
+    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    // Mid-Pacific at z=8: nothing seeded there. A 404 would make MapLibre
+    // retry the same empty tile forever.
+    let coord = tile_for(-150.0, 0.0, 8);
+    let (status, _) = get(
+        &state,
+        &format!("/v1/tiles/flights/{}/{}/{}", coord.0, coord.1, coord.2),
+        LOOPBACK,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn an_out_of_range_tile_is_a_client_error() {
+    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let (status, _) = get(&state, "/v1/tiles/flights/1/9/0", LOOPBACK).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = get(&state, "/v1/tiles/flights/8/1/not-a-row", LOOPBACK).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn the_style_document_points_at_the_public_url() {
+    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let (status, body) = get(&state, "/v1/style.json", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    let style = json(&body);
+    assert_eq!(style["version"], 8);
+    let tiles = style["sources"]["flights"]["tiles"][0].as_str().unwrap();
+    // A phone cannot use the bind address; the style must carry the address a
+    // client would actually type.
+    assert_eq!(
+        tiles,
+        "http://argus.test:8787/v1/tiles/flights/{z}/{x}/{y}.mvt"
+    );
+    let ids: Vec<&str> = style["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"flights-point"));
+}
+
+#[tokio::test]
+async fn the_dvr_parameter_reaches_both_entities_and_tiles() {
+    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let at = (Utc::now() - Duration::minutes(5)).to_rfc3339();
+    let (status, body) = get(
+        &state,
+        &format!("/v1/entities?bbox=-98,30,-97,31&at={at}"),
+        LOOPBACK,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // Five minutes ago there was nothing, because the seed is seconds old. The
+    // contract being asserted is that `at` is honoured at all — that the answer
+    // describes the requested instant rather than now.
+    let body = json(&body);
+    assert_eq!(body["live"], false);
+    assert!(body["at"].as_str().unwrap().starts_with(&at[..13]));
+
+    let coord = tile_for(-97.74, 30.27, 8);
+    let (status, _) = get(
+        &state,
+        &format!(
+            "/v1/tiles/flights/{}/{}/{}?at={at}",
+            coord.0, coord.1, coord.2
+        ),
+        LOOPBACK,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+/// Web-mercator tile containing a point. The inverse of `TileCoord::bounds`,
+/// written out here so the test does not lean on the code it is checking.
+fn tile_for(lon: f64, lat: f64, z: u8) -> (u8, u32, u32) {
+    let n = f64::from(1u32 << z);
+    let x = ((lon + 180.0) / 360.0 * n).floor() as u32;
+    let lat_rad = lat.to_radians();
+    let y = ((1.0 - (lat_rad.tan() + 1.0 / lat_rad.cos()).ln() / std::f64::consts::PI) / 2.0 * n)
+        .floor() as u32;
+    (z, x, y)
+}

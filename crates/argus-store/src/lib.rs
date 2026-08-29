@@ -9,9 +9,44 @@ use geozero::ToWkb;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::time::Duration;
 
+pub mod devices;
 pub mod model;
+pub mod serve;
 
 pub use model::EntityRow;
+pub use serve::DeltaRow;
+
+/// What a viewport query asks for beyond its bounding box.
+///
+/// `layers` and `kinds` are both here because they answer different questions
+/// and clients genuinely ask both: a map style selects layers, while the AR sky
+/// view wants every aircraft regardless of which feed produced it. An empty
+/// vector means "no constraint", not "match nothing" - the alternative would
+/// make the default filter return an empty map.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EntityFilter {
+    pub layers: Vec<String>,
+    pub kinds: Vec<argus_core::EntityKind>,
+}
+
+impl EntityFilter {
+    pub fn layers(layers: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            layers: layers.into_iter().collect(),
+            kinds: Vec::new(),
+        }
+    }
+
+    pub(crate) fn layers_arg(&self) -> Option<&[String]> {
+        (!self.layers.is_empty()).then_some(self.layers.as_slice())
+    }
+
+    /// Kinds as the database spells them.
+    pub(crate) fn kinds_arg(&self) -> Option<Vec<String>> {
+        (!self.kinds.is_empty())
+            .then(|| self.kinds.iter().map(|k| k.as_str().to_string()).collect())
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -168,7 +203,21 @@ impl Store {
             .map(|o| model::quality_str(o.quality).to_string())
             .collect();
         let label: Vec<Option<String>> = rows.iter().map(|o| o.label.clone()).collect();
-        let attrs: Vec<serde_json::Value> = rows.iter().map(|o| o.attrs.clone()).collect();
+        // A driver that sets no attributes leaves `Value::Null`, which would
+        // reach the database as JSON null rather than as an empty object — a
+        // distinction with no meaning here and a real cost downstream, where
+        // every client would have to null-check before reading a field. Coerce
+        // it once, at the boundary, so `attrs` is always an object.
+        let attrs: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|o| {
+                if o.attrs.is_null() {
+                    serde_json::Value::Object(serde_json::Map::new())
+                } else {
+                    o.attrs.clone()
+                }
+            })
+            .collect();
         // EWKB carries the SRID with the bytes, so the database is told 4326
         // explicitly rather than inferring it from the column type. A geometry
         // that fails to encode is dropped to NULL rather than failing the whole
@@ -332,7 +381,7 @@ impl Store {
     pub async fn entities_in_bbox(
         &self,
         bbox: BoundingBox,
-        layers: &[String],
+        filter: &EntityFilter,
         limit: i64,
     ) -> Result<Vec<EntityRow>, StoreError> {
         let parts = bbox.split_at_antimeridian();
@@ -350,15 +399,17 @@ impl Store {
                 WHERE (position && ST_MakeEnvelope($1, $2, $3, $4, 4326)
                        OR geom && ST_MakeEnvelope($1, $2, $3, $4, 4326))
                   AND ($5::text[] IS NULL OR layer_id = ANY($5))
+                  AND ($6::text[] IS NULL OR entity_kind = ANY($6))
                 ORDER BY observed_at DESC
-                LIMIT $6
+                LIMIT $7
                 "#,
             )
             .bind(part.west)
             .bind(part.south)
             .bind(part.east)
             .bind(part.north)
-            .bind(if layers.is_empty() { None } else { Some(layers) })
+            .bind(filter.layers_arg())
+            .bind(filter.kinds_arg())
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;
@@ -378,7 +429,7 @@ impl Store {
         &self,
         bbox: BoundingBox,
         at: DateTime<Utc>,
-        layers: &[String],
+        filter: &EntityFilter,
         limit: i64,
     ) -> Result<Vec<EntityRow>, StoreError> {
         let parts = bbox.split_at_antimeridian();
@@ -402,8 +453,9 @@ impl Store {
                   AND t.bucket > $5 - INTERVAL '15 minutes'
                   AND t.position && ST_MakeEnvelope($1, $2, $3, $4, 4326)
                   AND ($6::text[] IS NULL OR COALESCE(s.layer_id, t.source_id) = ANY($6))
+                  AND ($7::text[] IS NULL OR t.entity_kind = ANY($7))
                 ORDER BY t.entity_kind, t.entity_key, t.bucket DESC
-                LIMIT $7
+                LIMIT $8
                 "#,
             )
             .bind(part.west)
@@ -411,7 +463,8 @@ impl Store {
             .bind(part.east)
             .bind(part.north)
             .bind(at)
-            .bind(if layers.is_empty() { None } else { Some(layers) })
+            .bind(filter.layers_arg())
+            .bind(filter.kinds_arg())
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;

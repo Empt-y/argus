@@ -1,13 +1,17 @@
 //! The Argus daemon.
 //!
-//! Phase 0 scope: load and validate config, connect to the store, apply
-//! migrations, and report what it found. Ingest, API and alerting are wired in
-//! as their crates land.
+//! Loads and validates config, connects to the store, applies migrations, then
+//! runs two things concurrently for the rest of its life: the ingest scheduler
+//! filling the DVR, and the API serving it. Neither can outlive the other — a
+//! server with no ingest is a museum, and ingest with no server is a database
+//! nobody can see — so a failure in either brings the process down and lets
+//! systemd restart it.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 mod config;
+mod pairing;
 
 use config::Config;
 
@@ -85,6 +89,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- ingest ---------------------------------------------------------
     let http = argus_ingest::HttpClient::new(std::time::Duration::from_secs(30))?;
+    let api_store = store.clone();
     let runtime = argus_ingest::Runtime::new(
         store,
         argus_ingest::SchedulerConfig {
@@ -137,11 +142,58 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         cancel.cancel();
     });
 
-    tracing::info!("argusd startup complete; ingest running");
+    // --- api -------------------------------------------------------------
+    let api_state = argus_api::ApiState::new(
+        api_store.clone(),
+        argus_api::ApiConfig {
+            auth: match config.server.auth {
+                config::AuthPolicy::LoopbackExempt => argus_api::AuthMode::LoopbackExempt,
+                config::AuthPolicy::Required => argus_api::AuthMode::Required,
+            },
+            allowed_origins: config.server.allowed_origins.clone(),
+            client_keys: argus_api::ClientKeys {
+                google_maps_api_key: config.client_keys.google_maps_api_key.clone(),
+                cesium_ion_token: config.client_keys.cesium_ion_token.clone(),
+            },
+            public_url: config.server.public_url(),
+        },
+    );
+
+    // A daemon nobody has paired with is a daemon nobody can use, and the one
+    // moment an operator is definitely looking at the console is the moment
+    // they started it. Offering the code here rather than making them find a
+    // command for it is the difference between pairing taking ten seconds and
+    // taking a documentation search.
+    if !api_store.has_devices().await? {
+        let code = api_state.pairing.issue();
+        pairing::print_invitation(&api_state.pairing_url(&code), &code);
+    }
+
+    let listener = tokio::net::TcpListener::bind(&config.server.bind).await?;
+    tracing::info!(
+        bind = %config.server.bind,
+        public_url = %config.server.public_url(),
+        "api listening"
+    );
+    let api_cancel = runtime.cancel_token();
+    let api = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            argus_api::router(api_state)
+                .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move { api_cancel.cancelled().await })
+        .await
+    });
+
+    tracing::info!("argusd startup complete; ingest and api running");
     runtime
         .run(&credentials, budget, config.capture.disk_warn_fraction)
         .await?;
-    tracing::info!("ingest stopped");
+    tracing::info!("ingest stopped; draining api");
+    // The cancel token the API shut down on is the same one ingest stopped on,
+    // so this join is already resolving by the time it is awaited.
+    api.await??;
     Ok(())
 }
 

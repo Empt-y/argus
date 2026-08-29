@@ -11,6 +11,18 @@
 bind = "127.0.0.1:8787"
 allowed_origins = ["http://localhost:5173"]
 
+# Who has to present a device token.
+#   loopback_exempt - requests from this machine skip the check (the default:
+#                     anything that can reach 127.0.0.1 here can already read
+#                     this file, so a token would protect nothing)
+#   required        - everyone needs one, including this machine
+auth = "loopback_exempt"
+
+# How clients reach this server. Used for the tile URLs in /v1/style.json and
+# for the pairing QR, so it must be an address a *phone* can resolve — the bind
+# address is right only while everything is on this machine. Defaults to bind.
+# public_url = "http://athena.tail-scale.ts.net:8787"
+
 [database]
 url = "postgres://argus@localhost/argus"
 max_connections = 16

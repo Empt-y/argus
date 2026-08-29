@@ -16,6 +16,9 @@ argus-ingest = { workspace = true }
 argus-api = { workspace = true }
 argus-alert = { workspace = true }
 argus-analyze = { workspace = true }
+argus-tiles = { workspace = true }
+axum = { workspace = true }
+qrcode = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }

@@ -57,6 +57,33 @@ pub struct ServerConfig {
     /// Extra origins allowed to call the API (the web client in development).
     #[serde(default)]
     pub allowed_origins: Vec<String>,
+    /// Whether a request from this machine may skip the device token.
+    ///
+    /// Loopback-exempt is the practical default: a process that can reach
+    /// 127.0.0.1 on this box can already read the config file that holds every
+    /// credential, so demanding a token from it protects nothing while making
+    /// `curl` on the server tiresome. Set this to `required` for a deployment
+    /// where other people have shell accounts.
+    #[serde(default)]
+    pub auth: AuthPolicy,
+    /// How clients reach this server: the LAN or Tailscale address, used in the
+    /// tile URLs of the generated style and in the pairing QR.
+    ///
+    /// Defaults to the bind address, which is right for loopback development
+    /// and wrong the moment a phone is involved — `127.0.0.1` on a phone is the
+    /// phone. Set it whenever `bind` is not what a client would type.
+    #[serde(default)]
+    pub public_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthPolicy {
+    /// Loopback callers skip the token; everyone else needs one.
+    #[default]
+    LoopbackExempt,
+    /// Every caller needs a token, including this machine.
+    Required,
 }
 
 impl Default for ServerConfig {
@@ -64,6 +91,8 @@ impl Default for ServerConfig {
         Self {
             bind: "127.0.0.1:8787".into(),
             allowed_origins: Vec::new(),
+            auth: AuthPolicy::LoopbackExempt,
+            public_url: None,
         }
     }
 }
@@ -237,6 +266,15 @@ impl Config {
     /// makes credential brokering and rate limiting matter.
     pub fn is_externally_bound(&self) -> bool {
         !(self.server.bind.starts_with("127.") || self.server.bind.starts_with("[::1]"))
+    }
+}
+
+impl ServerConfig {
+    /// The URL clients should use, falling back to the bind address.
+    pub fn public_url(&self) -> String {
+        self.public_url
+            .clone()
+            .unwrap_or_else(|| format!("http://{}", self.bind))
     }
 }
 

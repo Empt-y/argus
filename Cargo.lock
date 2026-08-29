@@ -107,9 +107,13 @@ dependencies = [
  "base64",
  "chrono",
  "futures",
+ "geozero",
+ "hex",
  "rand 0.8.8",
  "serde",
  "serde_json",
+ "sha2",
+ "sqlx",
  "thiserror 2.0.20",
  "tokio",
  "tower",
@@ -168,8 +172,11 @@ dependencies = [
  "chrono",
  "geo-types",
  "geozero",
+ "hex",
+ "rand 0.8.8",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror 2.0.20",
  "tokio",
@@ -205,6 +212,9 @@ dependencies = [
  "argus-core",
  "argus-ingest",
  "argus-store",
+ "argus-tiles",
+ "axum",
+ "qrcode",
  "serde",
  "thiserror 2.0.20",
  "tokio",
@@ -2071,6 +2081,12 @@ checksum = "213622a1460818959ac1181aaeb2dc9c7f63df720db7d788b3e24eacd1983e13"
 dependencies = [
  "prost",
 ]
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quanta"
