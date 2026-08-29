@@ -16,6 +16,7 @@ import { LabelArbiter } from "./layers/labels";
 import type { ClientKeys, Entity, Layer } from "./net/types";
 import { Hud } from "./ui/hud";
 import { EntityCard } from "./ui/card";
+import { SensorStyles } from "./styles/sensors";
 import { ScreenSpaceEventHandler, ScreenSpaceEventType } from "cesium";
 
 /** Contacts unheard-of for this long stop being drawn at all. */
@@ -50,6 +51,8 @@ async function main(): Promise<void> {
   const renderer = new LayerRenderer(viewer);
   const labels = new LabelArbiter(viewer);
   hud.setPhotoreal(photoreal);
+  const sensors = new SensorStyles(viewer);
+  hud.setSensorStyles(sensors);
 
   // Labels are decided in screen space, so they can only be decided once the
   // camera is where it is going to be for this frame. `preRender` fires once
@@ -144,7 +147,7 @@ async function main(): Promise<void> {
   // Exposed for the console and for the headless smoke test. Not a public
   // interface — nothing in the client reads it.
   Object.assign(window, {
-    argus: { viewer, renderer, stream, api, card, geo: { loadGeoid, geoidReady, undulationM, resolveHeight } },
+    argus: { viewer, renderer, stream, api, card, sensors, geo: { loadGeoid, geoidReady, undulationM, resolveHeight } },
   });
 }
 

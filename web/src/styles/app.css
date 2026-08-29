@@ -73,11 +73,19 @@ html, body {
 
 .layer-row {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
   padding: 2px 0;
   cursor: pointer;
+}
+/* Truncate rather than wrap. A long layer name wrapping to three lines pushes
+   everything below it off a laptop screen, and the count — which is the part
+   that changes — is what gets pushed out of sight. */
+.layer-row > span:nth-child(2) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .layer-row.off { opacity: 0.4; }
 .layer-row .swatch {
@@ -112,7 +120,7 @@ html, body {
 
 /* The rail sizes to its content; a panel stretched down the viewport reads as
    a load that never finished. */
-.rail { align-self: start; }
+.rail { align-self: start; min-width: 17rem; max-width: 22rem; }
 
 .card {
   grid-column: 3;
@@ -139,3 +147,17 @@ html, body {
 }
 .card-rows dt { color: var(--dim); }
 .card-rows dd { margin: 0; overflow-wrap: anywhere; }
+
+.sensors { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+.sensor {
+  background: transparent;
+  border: 1px solid var(--edge);
+  color: var(--dim);
+  border-radius: 3px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.sensor:hover { color: var(--text); }
+.sensor.on { color: var(--text); border-color: var(--text); }

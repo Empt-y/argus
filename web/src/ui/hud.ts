@@ -14,6 +14,7 @@
 import type { Layer, Source, SourceState } from "../net/types";
 import type { StreamStatus } from "../net/stream";
 import type { LayerRenderer } from "../layers/entities";
+import { SENSOR_STYLES, type SensorStyles } from "../styles/sensors";
 
 /** How far back the scrubber reaches. Matches the `tracks_1m` retention. */
 const DVR_SPAN_MINUTES = 90 * 24 * 60;
@@ -25,6 +26,7 @@ export class Hud {
   readonly #scrubber: HTMLInputElement;
   readonly #scrubLabel: HTMLElement;
   readonly #notes: HTMLElement;
+  readonly #sensorBar: HTMLElement;
 
   #enabled = new Set<string>();
   #renderer: LayerRenderer | null = null;
@@ -49,6 +51,7 @@ export class Hud {
         <h2>DVR — <span data-scrublabel>live</span></h2>
         <input data-scrub type="range" min="-${DVR_SPAN_MINUTES}" max="0"
                value="0" step="1" style="width:100%" />
+        <div class="sensors" data-sensors></div>
       </div>
       <div class="attrib">Imagery ©&nbsp;<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors · CesiumJS</div>
     `;
@@ -58,6 +61,7 @@ export class Hud {
     this.#sourcePanel = root.querySelector("[data-sources]")!;
     this.#scrubber = root.querySelector("[data-scrub]")!;
     this.#scrubLabel = root.querySelector("[data-scrublabel]")!;
+    this.#sensorBar = root.querySelector("[data-sensors]")!;
 
     this.#scrubber.addEventListener("input", () => {
       this.#minutesBack = -Number(this.#scrubber.value);
@@ -70,6 +74,25 @@ export class Hud {
 
   onSelectionChange(handler: () => void): void {
     this.#onChange = handler;
+  }
+
+  /** Wire the sensor-look selector once the scene exists to apply it to. */
+  setSensorStyles(styles: SensorStyles): void {
+    const draw = () => {
+      this.#sensorBar.replaceChildren(
+        ...SENSOR_STYLES.map(({ id, label }) => {
+          const button = document.createElement("button");
+          button.className = `sensor${styles.active === id ? " on" : ""}`;
+          button.textContent = label;
+          button.addEventListener("click", () => {
+            styles.apply(id);
+            draw();
+          });
+          return button;
+        }),
+      );
+    };
+    draw();
   }
 
   /** The DVR instant, or `null` for live. */
