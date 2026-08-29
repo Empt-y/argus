@@ -207,22 +207,71 @@ impl Altitude {
     }
 }
 
+/// Beyond this, the provider's clock is wrong rather than merely imprecise, and
+/// is worth saying so about. A correct server is within network latency of us.
+const MAX_CLOCK_SKEW_S: i64 = 60;
+
 /// Turn a decoded feed into observations.
-fn decode(feed: ReadsbFeed, source_id: &SourceId, fallback_now: DateTime<Utc>) -> Vec<Observation> {
-    let server_now = feed
-        .now
-        .and_then(|secs| DateTime::from_timestamp(secs as i64, 0))
-        .unwrap_or(fallback_now);
+///
+/// `fetched_at` is *our* clock, and it is what timestamps are built from —
+/// deliberately, and not for want of a server clock to use instead. Both
+/// providers in this chain publish a `now` field, and both get it wrong in a
+/// different way: adsb.lol sends milliseconds where the format specifies
+/// seconds, and its clock is separately an hour off UTC. Read as seconds, that
+/// field put every aircraft it served in the year 58629, which is not merely
+/// wrong but unrecoverable — live entity state only accepts an observation
+/// newer than the one it holds, so those aircraft were then frozen against
+/// every correct fix that followed.
+///
+/// The fix is not to sniff the unit and carry on trusting the value. It is to
+/// stop depending on a third party's clock hygiene at all. `seen_pos` is a
+/// *relative* measure — how long ago the receiver heard this aircraft — and
+/// subtracting it from our own NTP-disciplined clock gives the same answer
+/// without inheriting anyone's error. The cost is one request latency of
+/// apparent freshness, well under the 0.1 s resolution `seen_pos` reports in.
+///
+/// The server clock is still read, but only to report on it.
+fn decode(feed: ReadsbFeed, source_id: &SourceId, fetched_at: DateTime<Utc>) -> Vec<Observation> {
+    if let Some(server_now) = feed.now.and_then(epoch_to_utc) {
+        let skew = (fetched_at - server_now).num_seconds();
+        if skew.abs() > MAX_CLOCK_SKEW_S {
+            // Not an error and not a reason to drop the batch: the positions
+            // are still good, and `seen_pos` is still meaningful. Worth a line
+            // in the journal because it is the sort of thing that quietly
+            // becomes a bug the moment anyone decides to trust `now`.
+            tracing::debug!(
+                source = %source_id,
+                skew_s = skew,
+                "provider clock disagrees with ours; timestamps come from our clock"
+            );
+        }
+    }
     feed.ac
         .into_iter()
-        .filter_map(|a| decode_aircraft(a, source_id, server_now))
+        .filter_map(|a| decode_aircraft(a, source_id, fetched_at))
         .collect()
+}
+
+/// Interpret an epoch value whose unit the provider has not committed to.
+///
+/// The readsb `aircraft.json` format specifies seconds and adsb.fi sends
+/// seconds; adsb.lol sends milliseconds. Sniffing rather than hard-coding per
+/// provider is safe here because the two ranges are thirty thousand years
+/// apart: a seconds value does not reach 1e12 until the year 33658, and a
+/// milliseconds value has been above it since 2001.
+fn epoch_to_utc(value: f64) -> Option<DateTime<Utc>> {
+    const MILLISECOND_THRESHOLD: f64 = 1e12;
+    if value >= MILLISECOND_THRESHOLD {
+        DateTime::from_timestamp_millis(value as i64)
+    } else {
+        DateTime::from_timestamp(value as i64, 0)
+    }
 }
 
 fn decode_aircraft(
     a: Aircraft,
     source_id: &SourceId,
-    server_now: DateTime<Utc>,
+    fetched_at: DateTime<Utc>,
 ) -> Option<Observation> {
     let hex = a.hex.as_deref()?.trim();
     if hex.is_empty() {
@@ -231,13 +280,14 @@ fn decode_aircraft(
     let (lat, lon) = (a.lat?, a.lon?);
 
     // Positions age. `seen_pos` is how long ago the receiver actually heard
-    // this one, so it is what `observed_at` must be built from — using fetch
-    // time instead would claim a two-minute-old contact is current.
+    // this one, so it has to be subtracted — taking fetch time alone would
+    // claim a two-minute-old contact is current. It is subtracted from *our*
+    // clock rather than the provider's; see `decode` for why.
     let age_s = a.seen_pos.unwrap_or(0.0).max(0.0);
     if age_s > MAX_POSITION_AGE_S {
         return None;
     }
-    let observed_at = server_now - Duration::milliseconds((age_s * 1000.0) as i64);
+    let observed_at = fetched_at - Duration::milliseconds((age_s * 1000.0) as i64);
 
     let on_ground = a.alt_baro.as_ref().is_some_and(Altitude::is_ground);
 
@@ -436,19 +486,73 @@ mod tests {
     }
 
     #[test]
-    fn observed_at_is_built_from_position_age_not_fetch_time() {
+    fn a_broken_provider_clock_cannot_reach_observed_at() {
+        // The failure this guards against, in the exact form it arrived in:
+        // adsb.lol reports `now` in milliseconds where the format specifies
+        // seconds. Read as seconds that is the year 58629, and because live
+        // entity state only accepts an observation newer than the one it
+        // holds, every aircraft it served was then frozen against every
+        // correct fix that followed.
+        //
+        // Timestamps come from our clock, so a `now` field this broken changes
+        // nothing about the output.
+        let fetched_at = Utc::now();
+        let feed: ReadsbFeed = serde_json::from_str(
+            r#"{"now": 1788007461001,
+                "ac": [{"hex":"abc123","lat":51.0,"lon":-0.4,"alt_baro":35000,"seen_pos":1.0}]}"#,
+        )
+        .unwrap();
+        let obs = decode(feed, &SourceId::new("adsb-lol"), fetched_at);
+        assert_eq!(obs.len(), 1);
+        assert_eq!(obs[0].observed_at, fetched_at - Duration::seconds(1));
+        assert!(obs[0].is_temporally_plausible());
+    }
+
+    #[test]
+    fn a_provider_clock_an_hour_off_utc_cannot_skew_timestamps() {
+        // The second thing wrong with the same provider: its clock is an hour
+        // behind UTC. Trusting it would have made every aircraft look an hour
+        // stale, which is subtler than the year 58629 and would have survived
+        // much longer.
+        let fetched_at = Utc::now();
+        let hour_behind = (fetched_at - Duration::hours(1)).timestamp_millis();
+        let feed: ReadsbFeed = serde_json::from_str(&format!(
+            r#"{{"now": {hour_behind},
+                 "ac": [{{"hex":"abc123","lat":51.0,"lon":-0.4,"alt_baro":35000,"seen_pos":2.0}}]}}"#
+        ))
+        .unwrap();
+        let obs = decode(feed, &SourceId::new("adsb-lol"), fetched_at);
+        assert_eq!(obs[0].observed_at, fetched_at - Duration::seconds(2));
+    }
+
+    #[test]
+    fn the_two_epoch_units_are_thirty_thousand_years_apart() {
+        // Nothing ambiguous sits near the threshold: seconds do not reach 1e12
+        // until the year 33658, and milliseconds passed it in 2001.
+        assert_eq!(
+            epoch_to_utc(1_756_000_000.0).unwrap(),
+            DateTime::from_timestamp(1_756_000_000, 0).unwrap()
+        );
+        assert_eq!(
+            epoch_to_utc(1_756_000_000_000.0).unwrap(),
+            DateTime::from_timestamp(1_756_000_000, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn observed_at_subtracts_the_position_age() {
         // seen_pos says how long ago the receiver actually heard the aircraft.
-        // Using fetch time would claim a stale contact is current, and would
-        // smear every track in the DVR.
+        // Ignoring it would claim a stale contact is current, and would smear
+        // every track in the DVR.
         let feed: ReadsbFeed = serde_json::from_str(
             r#"{"now":1756000000,"ac":[
                 {"hex":"abc123","lat":51.0,"lon":-0.4,"alt_baro":35000,"seen_pos":45.0}
             ]}"#,
         )
         .unwrap();
-        let obs = decode(feed, &SourceId::new("t"), Utc::now());
-        let expected = DateTime::from_timestamp(1_756_000_000 - 45, 0).unwrap();
-        assert!((obs[0].observed_at - expected).num_seconds().abs() <= 1);
+        let fetched_at = Utc::now();
+        let obs = decode(feed, &SourceId::new("t"), fetched_at);
+        assert_eq!(obs[0].observed_at, fetched_at - Duration::seconds(45));
     }
 
     #[test]

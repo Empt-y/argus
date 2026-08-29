@@ -149,7 +149,11 @@ impl Store {
     ) -> Result<WriteOutcome, StoreError> {
         let rows: Vec<&Observation> = observations
             .iter()
-            .filter(|o| o.is_meaningful() && o.entity.kind.is_timeseries())
+            .filter(|o| {
+                o.is_meaningful()
+                    && o.entity.kind.is_timeseries()
+                    && temporally_plausible(o)
+            })
             .collect();
         let skipped = (observations.len() - rows.len()) as u64;
         if rows.is_empty() {
@@ -625,6 +629,27 @@ impl Store {
         .await?;
         Ok(bytes.unwrap_or(0))
     }
+}
+
+/// Refuse an observation whose timestamp cannot be real, and say so loudly.
+///
+/// The store is the last place this can be caught. Past this point a bad
+/// timestamp is permanent: the live-state upsert only accepts a row newer than
+/// the one it holds, so a reading from the far future locks that entity out of
+/// every subsequent update. Logging at warn rather than debug is deliberate —
+/// this only fires on a driver bug, and a driver bug that silently drops rows
+/// is worse than one that is noisy about it.
+fn temporally_plausible(o: &Observation) -> bool {
+    if o.is_temporally_plausible() {
+        return true;
+    }
+    tracing::warn!(
+        source = %o.source_id,
+        entity = %o.entity,
+        observed_at = %o.observed_at,
+        "refusing an observation with an implausible timestamp; this is a driver bug"
+    );
+    false
 }
 
 /// Convert a stored row back into the core types.

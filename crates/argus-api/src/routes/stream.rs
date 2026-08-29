@@ -19,6 +19,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::Response;
 use chrono::{DateTime, Duration, Utc};
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 /// How often the server looks for changes. Two seconds is below the cadence of
@@ -30,9 +31,15 @@ const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 ///
 /// A transaction that commits after a later one can carry an earlier
 /// `updated_at`, so a cursor set to the newest row seen can step over rows that
-/// were still uncommitted. Re-reading a couple of seconds costs a few duplicate
-/// deltas, which are harmless — the client keys by entity and overwrites — and
-/// it makes a silently missing contact impossible.
+/// were still uncommitted. Re-reading a few seconds closes that window.
+///
+/// Re-reading is not the same as re-sending. The overlap alone was tried and is
+/// wrong: pinning the cursor at `newest - overlap` means that once a feed goes
+/// quiet, nothing ever pushes the cursor past the last batch, and the same rows
+/// go out on every tick forever — 119 aircraft every two seconds for a source
+/// that polls every fifteen. So the window is re-queried and what has already
+/// been sent is filtered out by `(entity, updated_at)`, which is the only thing
+/// that distinguishes a genuinely new update from the same one seen twice.
 const CURSOR_OVERLAP: Duration = Duration::seconds(3);
 
 /// Cap on rows in one frame, so a client that subscribes to the planet gets a
@@ -83,7 +90,40 @@ pub async fn stream(ws: WebSocketUpgrade, State(state): State<ApiState>) -> Resp
 struct Subscription {
     bbox: BoundingBox,
     filter: EntityFilter,
+    /// Floor for the next query. Sits `CURSOR_OVERLAP` behind the newest row
+    /// seen, so a late-committing row is still caught.
     cursor: DateTime<Utc>,
+    /// The `updated_at` last sent for each entity, for everything inside the
+    /// overlap window. Bounded by what one poll can return, and pruned to the
+    /// cursor on every tick — an entry older than the query floor can never
+    /// come back, so keeping it would be pure leak.
+    sent: HashMap<(String, String), DateTime<Utc>>,
+}
+
+impl Subscription {
+    /// Rows that are genuinely new to this client, in the order they happened.
+    fn undelivered(&mut self, rows: Vec<argus_store::DeltaRow>) -> Vec<argus_store::EntityRow> {
+        let mut fresh = Vec::with_capacity(rows.len());
+        let mut newest = None::<DateTime<Utc>>;
+        for row in rows {
+            let key = (
+                row.entity.entity_kind.clone(),
+                row.entity.entity_key.clone(),
+            );
+            newest = Some(newest.map_or(row.updated_at, |n: DateTime<Utc>| n.max(row.updated_at)));
+            if self.sent.get(&key) == Some(&row.updated_at) {
+                continue;
+            }
+            self.sent.insert(key, row.updated_at);
+            fresh.push(row.entity);
+        }
+        if let Some(newest) = newest {
+            self.cursor = newest - CURSOR_OVERLAP;
+        }
+        let floor = self.cursor;
+        self.sent.retain(|_, at| *at >= floor);
+        fresh
+    }
 }
 
 async fn run(mut socket: WebSocket, state: ApiState) {
@@ -133,11 +173,13 @@ async fn run(mut socket: WebSocket, state: ApiState) {
                 {
                     Ok(rows) if rows.is_empty() => {}
                     Ok(rows) => {
-                        // Advance to the newest row seen, less the overlap.
-                        if let Some(newest) = rows.iter().map(|r| r.updated_at).max() {
-                            sub.cursor = newest - CURSOR_OVERLAP;
+                        let entities = sub.undelivered(rows);
+                        // Every row was one this client already has. Normal
+                        // between polls of a 15-second feed, and not something
+                        // to spend a frame on.
+                        if entities.is_empty() {
+                            continue;
                         }
-                        let entities: Vec<_> = rows.into_iter().map(|r| r.entity).collect();
                         let frame = ServerFrame::Delta {
                             at: Utc::now(),
                             count: entities.len(),
@@ -220,14 +262,17 @@ async fn handle_text(
     })?;
 
     // The cursor starts in the recent past rather than at `now`, so an entity
-    // updated between the snapshot query and the first tick is sent again
-    // rather than lost in the gap.
+    // updated between the snapshot query and the first tick is caught rather
+    // than lost in the gap. The snapshot carries no `updated_at`, so `sent`
+    // starts empty — the cost is that the first delta may repeat a handful of
+    // rows the snapshot already carried, which is the safe direction to err.
     let cursor = Utc::now() - CURSOR_OVERLAP;
     Ok((
         Subscription {
             bbox,
             filter,
             cursor,
+            sent: HashMap::new(),
         },
         ServerFrame::Snapshot {
             at: at.unwrap_or_else(Utc::now),
@@ -271,6 +316,89 @@ mod tests {
     #[test]
     fn an_unknown_frame_type_is_a_parse_error_rather_than_a_default() {
         assert!(serde_json::from_str::<ClientFrame>(r#"{"type":"unsubscribe"}"#).is_err());
+    }
+
+    fn subscription() -> Subscription {
+        Subscription {
+            bbox: BoundingBox::GLOBAL,
+            filter: EntityFilter::default(),
+            cursor: Utc::now() - Duration::hours(1),
+            sent: HashMap::new(),
+        }
+    }
+
+    fn delta_row(key: &str, updated_at: DateTime<Utc>) -> argus_store::DeltaRow {
+        argus_store::DeltaRow {
+            entity: argus_store::EntityRow {
+                entity_kind: "aircraft".into(),
+                entity_key: key.into(),
+                source_id: "adsb-lol".into(),
+                layer_id: "flights".into(),
+                observed_at: updated_at,
+                lon: Some(-0.4),
+                lat: Some(51.5),
+                geom: None,
+                alt_m: None,
+                alt_datum: None,
+                course_deg: None,
+                heading_deg: None,
+                speed_mps: None,
+                vrate_mps: None,
+                quality: "live".into(),
+                label: None,
+                attrs: serde_json::json!({}),
+            },
+            updated_at,
+        }
+    }
+
+    #[test]
+    fn a_quiet_feed_stops_producing_deltas_instead_of_repeating_itself() {
+        // The bug this exists to prevent: the overlap re-queries the same rows
+        // on every tick, and without this filter a source polling every fifteen
+        // seconds sent its whole batch every two.
+        let mut sub = subscription();
+        let at = Utc::now();
+        let batch = vec![delta_row("aaa", at), delta_row("bbb", at)];
+
+        assert_eq!(sub.undelivered(batch.clone()).len(), 2);
+        assert!(sub.undelivered(batch.clone()).is_empty());
+        assert!(sub.undelivered(batch).is_empty());
+    }
+
+    #[test]
+    fn a_genuinely_updated_entity_is_sent_again() {
+        let mut sub = subscription();
+        let at = Utc::now();
+        assert_eq!(sub.undelivered(vec![delta_row("aaa", at)]).len(), 1);
+        // Same aircraft, new fix: this must go out.
+        let later = at + Duration::seconds(1);
+        assert_eq!(sub.undelivered(vec![delta_row("aaa", later)]).len(), 1);
+    }
+
+    #[test]
+    fn a_late_committing_row_inside_the_overlap_is_still_delivered() {
+        // The case the overlap exists for: a transaction that commits after a
+        // later one but carries an earlier `updated_at`.
+        let mut sub = subscription();
+        let at = Utc::now();
+        assert_eq!(sub.undelivered(vec![delta_row("aaa", at)]).len(), 1);
+        let earlier = at - Duration::seconds(1);
+        assert!(earlier > sub.cursor, "the overlap must still cover it");
+        assert_eq!(sub.undelivered(vec![delta_row("bbb", earlier)]).len(), 1);
+    }
+
+    #[test]
+    fn delivered_rows_are_forgotten_once_they_fall_out_of_the_window() {
+        // Otherwise a long-lived subscription accumulates every entity it has
+        // ever seen.
+        let mut sub = subscription();
+        let old = Utc::now() - Duration::minutes(10);
+        sub.undelivered(vec![delta_row("aaa", old)]);
+        assert_eq!(sub.sent.len(), 1);
+        sub.undelivered(vec![delta_row("bbb", Utc::now())]);
+        assert_eq!(sub.sent.len(), 1, "the ten-minute-old entry should be gone");
+        assert!(sub.sent.contains_key(&("aircraft".to_string(), "bbb".to_string())));
     }
 
     #[test]

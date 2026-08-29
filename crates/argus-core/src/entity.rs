@@ -325,11 +325,83 @@ impl Observation {
             || self.geom.is_some()
             || !self.attrs.is_null()
     }
+
+    /// Whether `observed_at` could plausibly be a real observation time.
+    ///
+    /// This exists because a wrong timestamp is not merely wrong data — it is
+    /// *unrecoverable* data. Live entity state is upserted under
+    /// `WHERE EXCLUDED.observed_at > entities.observed_at`, so a single reading
+    /// dated in the far future freezes that entity forever: every correct
+    /// observation that follows is silently discarded for being older. It also
+    /// lands in a rollup bucket the DVR will never look in and that retention
+    /// will never drop.
+    ///
+    /// The failure this was written for was a unit mismatch — one provider in
+    /// the flights chain reports its server clock in milliseconds where the
+    /// format specifies seconds, which put every aircraft it served in the year
+    /// 58629. Drivers are fixed as such things are found, but the store must not
+    /// depend on every driver being right, because the cost of being wrong once
+    /// is permanent.
+    ///
+    /// Deliberately generous rather than tight. Feeds are legitimately late
+    /// (a backfilled catalogue, a receiver that was offline), clocks are
+    /// legitimately skewed by seconds, and rejecting real data to catch a bug
+    /// would be the worse trade. What it refuses is only the impossible.
+    pub fn is_temporally_plausible(&self) -> bool {
+        const FUTURE_TOLERANCE_HOURS: i64 = 24;
+        // Before GPS-era civil positioning; nothing Argus ingests predates it,
+        // and a zero or epoch timestamp is the classic decode failure.
+        const EARLIEST_YEAR: i32 = 1990;
+
+        use chrono::Datelike;
+        let now = Utc::now();
+        self.observed_at <= now + chrono::Duration::hours(FUTURE_TOLERANCE_HOURS)
+            && self.observed_at.year() >= EARLIEST_YEAR
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use chrono::Duration;
+
+    fn observation_at(observed_at: DateTime<Utc>) -> Observation {
+        Observation::new(
+            crate::source::SourceId::new("test"),
+            EntityId::aircraft("abc123"),
+            observed_at,
+            Quality::Live,
+        )
+        .with_position(Position::surface(-0.4, 51.5))
+    }
+
+    #[test]
+    fn a_far_future_timestamp_is_refused_before_it_can_freeze_an_entity() {
+        // The real failure: a provider reporting its clock in milliseconds
+        // where the format says seconds put every aircraft in the year 58629,
+        // and the live-state upsert then refused every correct fix that
+        // followed for being "older".
+        let bogus = DateTime::from_timestamp(1_788_007_461_001, 0).expect("in range");
+        assert!(!observation_at(bogus).is_temporally_plausible());
+        assert!(!observation_at(Utc::now() + Duration::days(3)).is_temporally_plausible());
+    }
+
+    #[test]
+    fn an_epoch_or_zero_timestamp_is_refused() {
+        // The other half of a decode failure: a missing field defaulting to 0.
+        assert!(!observation_at(DateTime::from_timestamp(0, 0).unwrap()).is_temporally_plausible());
+    }
+
+    #[test]
+    fn ordinary_lateness_and_clock_skew_are_accepted() {
+        // Rejecting real data to catch a bug would be the worse trade: feeds
+        // backfill, receivers come back online, and clocks drift.
+        assert!(observation_at(Utc::now()).is_temporally_plausible());
+        assert!(observation_at(Utc::now() - Duration::days(30)).is_temporally_plausible());
+        assert!(observation_at(Utc::now() + Duration::minutes(5)).is_temporally_plausible());
+        assert!(observation_at(Utc::now() + Duration::hours(23)).is_temporally_plausible());
+    }
 
     #[test]
     fn aircraft_keys_normalise_case_so_feeds_collide() {

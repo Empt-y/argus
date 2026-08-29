@@ -465,12 +465,44 @@ async fn the_style_document_points_at_the_public_url() {
     assert!(ids.contains(&"flights-point"));
 }
 
+/// The headline claim of this phase: a client time-travels by adding one query
+/// parameter, and the tiler honours it, so the phone gets the DVR for free.
+///
+/// Proved against a real past instant rather than an empty one. The rollup that
+/// backs the DVR is materialised on a timer, so this refreshes it explicitly
+/// rather than waiting a minute for the policy to fire.
 #[tokio::test]
-async fn the_dvr_parameter_reaches_both_entities_and_tiles() {
+async fn the_dvr_serves_a_past_instant_through_both_entities_and_tiles() {
     let Some(state) = state(AuthMode::LoopbackExempt).await else {
         return;
     };
-    let at = (Utc::now() - Duration::minutes(5)).to_rfc3339();
+
+    // An aircraft that was over Austin two hours ago and is not there now.
+    let then = Utc::now() - Duration::hours(2);
+    let historic = Observation::new(
+        SourceId::new("test-adsb"),
+        EntityId::aircraft("h15tor"),
+        then,
+        Quality::Live,
+    )
+    .with_position(Position {
+        lon: -97.74,
+        lat: 30.27,
+        alt_m: Some(9_000.0),
+        datum: argus_core::entity::AltitudeDatum::Barometric,
+    })
+    .with_label("PAST01");
+    state
+        .store
+        .write_observations(&[historic])
+        .await
+        .expect("seed history");
+    sqlx::query("CALL refresh_continuous_aggregate('tracks_1m', NULL, NULL)")
+        .execute(state.store.pool())
+        .await
+        .expect("materialise the rollup");
+
+    let at = then.to_rfc3339();
     let (status, body) = get(
         &state,
         &format!("/v1/entities?bbox=-98,30,-97,31&at={at}"),
@@ -478,15 +510,23 @@ async fn the_dvr_parameter_reaches_both_entities_and_tiles() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    // Five minutes ago there was nothing, because the seed is seconds old. The
-    // contract being asserted is that `at` is honoured at all — that the answer
-    // describes the requested instant rather than now.
     let body = json(&body);
     assert_eq!(body["live"], false);
     assert!(body["at"].as_str().unwrap().starts_with(&at[..13]));
+    let keys: Vec<&str> = body["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["entity_key"].as_str().unwrap())
+        .collect();
+    assert!(
+        keys.contains(&"h15tor"),
+        "the DVR should return where it actually was, got {keys:?}"
+    );
 
+    // The same instant, through the tiler.
     let coord = tile_for(-97.74, 30.27, 8);
-    let (status, _) = get(
+    let (status, body) = get(
         &state,
         &format!(
             "/v1/tiles/flights/{}/{}/{}?at={at}",
@@ -495,7 +535,11 @@ async fn the_dvr_parameter_reaches_both_entities_and_tiles() {
         LOOPBACK,
     )
     .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(status, StatusCode::OK);
+    use geozero::mvt::Message;
+    let tile = geozero::mvt::Tile::decode(body.as_slice()).expect("valid MVT");
+    assert_eq!(tile.layers[0].name, "flights");
+    assert!(!tile.layers[0].features.is_empty());
 }
 
 /// Web-mercator tile containing a point. The inverse of `TileCoord::bounds`,
