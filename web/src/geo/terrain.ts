@@ -34,17 +34,25 @@ import {
 } from "cesium";
 import { geoidReady, undulationM } from "./datum.ts";
 
+/** One prepared survey. */
+export interface GridMeta {
+  /** `[west, south, east, north]` degrees. */
+  bounds: [number, number, number, number];
+  /** `"orthometric"` or `"ellipsoidal"`. Never assume. */
+  datum: string;
+  attribution: string;
+  ground_metres: number;
+}
+
 export interface TerrainMeta {
   available: boolean;
-  /** `[west, south, east, north]` degrees, or `null` when nothing is served. */
+  /** Finest first. */
+  grids: GridMeta[];
+  /** Envelope of every grid — a quick reject, never a coverage test. */
   bounds: [number, number, number, number] | null;
   tile_size: number;
   min_level: number;
   max_level: number;
-  /** `"orthometric"` or `"ellipsoidal"`. Never assume. */
-  datum: string | null;
-  attribution: string | null;
-  ground_metres: number | null;
 }
 
 /**
@@ -153,20 +161,36 @@ export class ArgusTerrainProvider {
     return this.#requestOurs(x, y, level, request);
   }
 
-  /** Whether this tile is one the local grid wholly covers. */
-  #isOurs(x: number, y: number, level: number): boolean {
-    const bounds = this.#meta.bounds;
-    if (!this.#meta.available || !bounds) return false;
+  /**
+   * Whether some single grid wholly covers this tile.
+   *
+   * One grid, not the union of several: two surveys can between them enclose a
+   * tile that neither covers alone, and answering that from a mosaic would mean
+   * inventing the gap between them.
+   */
+  #gridFor(x: number, y: number, level: number): GridMeta | null {
+    if (!this.#meta.available) return null;
     if (level < this.#meta.min_level || level > this.#meta.max_level) {
-      return false;
+      return null;
     }
-    // Without the geoid the heights would be 46 m out, which is worse than
-    // being coarse. The model loads once, early, so this is a brief window.
-    if (this.#meta.datum === "orthometric" && !geoidReady()) return false;
-
     const [west, south, east, north] = tileRect(level, x, y);
-    const [bw, bs, be, bn] = bounds;
-    return west >= bw && east <= be && south >= bs && north <= bn;
+    return (
+      this.#meta.grids.find(
+        (g) =>
+          west >= g.bounds[0] &&
+          east <= g.bounds[2] &&
+          south >= g.bounds[1] &&
+          north <= g.bounds[3] &&
+          // Without the geoid an orthometric grid would be 46 m out, which is
+          // worse than being coarse. The model loads once, early, so this is a
+          // brief window rather than a permanent refusal.
+          (g.datum !== "orthometric" || geoidReady()),
+      ) ?? null
+    );
+  }
+
+  #isOurs(x: number, y: number, level: number): boolean {
+    return this.#gridFor(x, y, level) !== null;
   }
 
   async #requestOurs(
@@ -185,7 +209,8 @@ export class ArgusTerrainProvider {
         const heights = new Float32Array(await res.arrayBuffer());
         const size = this.#meta.tile_size;
         if (heights.length === size * size) {
-          this.#toEllipsoidal(heights, level, x, y, size);
+          const grid = this.#gridFor(x, y, level);
+          this.#toEllipsoidal(heights, level, x, y, size, grid);
           this.#served++;
           return new HeightmapTerrainData({
             buffer: heights,
@@ -225,8 +250,9 @@ export class ArgusTerrainProvider {
     x: number,
     y: number,
     size: number,
+    grid: GridMeta | null,
   ): void {
-    if (this.#meta.datum !== "orthometric") return;
+    if (grid?.datum !== "orthometric") return;
     const [west, south, east, north] = tileRect(level, x, y);
     const nw = undulationM(north, west);
     const ne = undulationM(north, east);

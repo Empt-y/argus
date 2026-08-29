@@ -162,11 +162,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Terrain is optional and must stay optional: a grid that fails to load is
     // a client falling back to global terrain, never a daemon that will not
-    // start. Loading it here rather than per request keeps the whole grid
-    // resident, which is the point — a sample has to be an array index.
-    let api_state = match config.client.terrain_grid.as_ref() {
-        None => api_state,
-        Some(path) => match argus_tiles::dem::Dem::load(path) {
+    // start. Order is preserved from the config — finest first — because the
+    // tile route answers from the first grid that covers a tile whole.
+    let mut dems = Vec::new();
+    for path in &config.client.terrain_grids {
+        match argus_tiles::dem::Dem::load(path) {
             Ok(dem) => {
                 let m = dem.meta();
                 tracing::info!(
@@ -178,16 +178,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     bounds = format!("{},{},{},{}", m.west, m.south, m.east, m.north),
                     "terrain grid loaded"
                 );
-                argus_api::ApiState {
-                    dem: Some(std::sync::Arc::new(dem)),
-                    ..api_state
-                }
+                dems.push(dem);
             }
-            Err(err) => {
-                tracing::warn!("terrain grid {} not loaded: {err}", path.display());
-                api_state
-            }
-        },
+            Err(err) => tracing::warn!("terrain grid {} not loaded: {err}", path.display()),
+        }
+    }
+    let api_state = argus_api::ApiState {
+        dems: std::sync::Arc::new(dems),
+        ..api_state
     };
 
     // A daemon nobody has paired with is a daemon nobody can use, and the one

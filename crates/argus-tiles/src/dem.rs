@@ -12,6 +12,16 @@
 //! geospatial library to read it is the point: answering "how high is the
 //! ground here" is a multiply and an index.
 //!
+//! The array is **read positionally, never loaded**. A county at 2 m is a few
+//! hundred megabytes and the whole home area at 5 m runs to several gigabytes,
+//! which is an absurd amount of memory to hold permanently for a daemon that is
+//! also running a database — and pointless, since a session only ever looks at
+//! the handful of tiles under the camera. So a sample reads the two or four
+//! cells it needs by offset and nothing else, and the page cache does the
+//! remembering. Memory mapping would suit the access pattern equally well and
+//! is not used on purpose: `unsafe_code = "forbid"` is a workspace-wide promise
+//! worth more than the syscalls it costs here.
+//!
 //! **The heights are orthometric.** The Environment Agency publishes above
 //! Ordnance Datum Newlyn, which is a geoid, and Cesium wants heights above the
 //! ellipsoid — a difference of about 46 m in southern England, or roughly the
@@ -62,10 +72,10 @@ pub struct DemMeta {
     pub ground_metres: f64,
 }
 
-/// A loaded elevation grid.
+/// An elevation grid, read from disk on demand.
 pub struct Dem {
     meta: DemMeta,
-    heights: Vec<f32>,
+    file: std::fs::File,
 }
 
 impl Dem {
@@ -83,16 +93,23 @@ impl Dem {
             source,
         })?;
 
-        let bytes = std::fs::read(&bin_path).map_err(|source| DemError::Read {
+        let file = std::fs::File::open(&bin_path).map_err(|source| DemError::Read {
             path: bin_path.display().to_string(),
             source,
         })?;
+        let len = file
+            .metadata()
+            .map_err(|source| DemError::Read {
+                path: bin_path.display().to_string(),
+                source,
+            })?
+            .len() as usize;
         let expected = meta.width * meta.height * 4;
-        if bytes.len() != expected {
+        if len != expected {
             return Err(DemError::Invalid(format!(
                 "{} is {} bytes, expected {} for {}x{} f32",
                 bin_path.display(),
-                bytes.len(),
+                len,
                 expected,
                 meta.width,
                 meta.height
@@ -104,11 +121,7 @@ impl Dem {
             ));
         }
 
-        let heights = bytes
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-            .collect();
-        Ok(Self { meta, heights })
+        Ok(Self { meta, file })
     }
 
     pub fn meta(&self) -> &DemMeta {
@@ -135,12 +148,36 @@ impl Dem {
             && south >= self.meta.south
     }
 
-    fn at(&self, col: usize, row: usize) -> Option<f32> {
-        let v = *self.heights.get(row * self.meta.width + col)?;
+    /// Two horizontally adjacent cells in one read.
+    ///
+    /// Bilinear interpolation always wants a pair, and a pair is contiguous on
+    /// disk, so asking for both at once halves the syscalls for no extra work.
+    fn pair(&self, col: usize, row: usize) -> [Option<f32>; 2] {
+        use std::os::unix::fs::FileExt;
+        if row >= self.meta.height || col >= self.meta.width {
+            return [None, None];
+        }
+        let wide = col + 1 < self.meta.width;
+        let offset = ((row * self.meta.width + col) * 4) as u64;
+        let mut buf = [0u8; 8];
+        let want = if wide { 8 } else { 4 };
+        if self.file.read_exact_at(&mut buf[..want], offset).is_err() {
+            return [None, None];
+        }
+        let first = Self::valid(f32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]), &self.meta);
+        let second = if wide {
+            Self::valid(f32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]), &self.meta)
+        } else {
+            first
+        };
+        [first, second]
+    }
+
+    fn valid(v: f32, meta: &DemMeta) -> Option<f32> {
         // Nodata is a real answer over water and outside the survey, and it is
         // a large negative sentinel — averaging it into a neighbour would carve
         // a trench through the coastline.
-        if !v.is_finite() || (v - self.meta.nodata).abs() < 0.5 {
+        if !v.is_finite() || (v - meta.nodata).abs() < 0.5 {
             None
         } else {
             Some(v)
@@ -166,11 +203,16 @@ impl Dem {
         let cx1 = (cx + 1).min(self.meta.width - 1);
         let cy1 = (cy + 1).min(self.meta.height - 1);
 
+        let top = self.pair(cx, cy);
+        let bottom = self.pair(cx, cy1);
+        // `pair` returns the cell and its right-hand neighbour; when the sample
+        // sits in the last column both are the same cell, which is the correct
+        // clamp at the edge.
         let q = [
-            self.at(cx, cy),
-            self.at(cx1, cy),
-            self.at(cx, cy1),
-            self.at(cx1, cy1),
+            top[0],
+            if cx1 == cx { top[0] } else { top[1] },
+            bottom[0],
+            if cx1 == cx { bottom[0] } else { bottom[1] },
         ];
         // A cell touching nodata falls back to the nearest neighbour that has a
         // value rather than blending toward the sentinel.
@@ -178,9 +220,9 @@ impl Dem {
             return q.into_iter().flatten().next();
         }
         let (v00, v10, v01, v11) = (q[0]?, q[1]?, q[2]?, q[3]?);
-        let top = v00 + (v10 - v00) * fx;
-        let bottom = v01 + (v11 - v01) * fx;
-        Some(top + (bottom - top) * fy)
+        let upper = v00 + (v10 - v00) * fx;
+        let lower = v01 + (v11 - v01) * fx;
+        Some(upper + (lower - upper) * fy)
     }
 
     /// A `size` × `size` height grid over a tile rectangle, row-major from the

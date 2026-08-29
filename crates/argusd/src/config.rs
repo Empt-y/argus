@@ -189,12 +189,17 @@ pub struct ClientConfig {
     /// whole reason this setting exists.
     #[serde(default)]
     pub buildings_tileset_url: Option<String>,
-    /// Path to a prepared elevation grid, without the extension: the daemon
-    /// reads `<path>.json` and `<path>.bin`. Built by
-    /// `tools/terrain/prepare_terrain.py`. Absent means clients fall back to
-    /// whatever global terrain they can reach.
+    /// Prepared elevation grids, without extensions: the daemon reads
+    /// `<path>.json` and `<path>.bin` for each. Built by
+    /// `tools/terrain/prepare_terrain.py`.
+    ///
+    /// Ordered finest first. A tile is answered by the first grid that wholly
+    /// covers it, so a small high-resolution survey listed ahead of a wide
+    /// coarse one gives detail where it exists and coverage everywhere else,
+    /// which is exactly how the data actually arrives. Empty means clients fall
+    /// back to whatever global terrain they can reach.
     #[serde(default)]
-    pub terrain_grid: Option<PathBuf>,
+    pub terrain_grids: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

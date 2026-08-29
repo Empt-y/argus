@@ -55,8 +55,10 @@ COVERAGE = (
     "13787b9a-26a4-4775-8523-806d13af58fc__Lidar_Composite_Elevation_DTM_1m"
 )
 # The service is happy to scale server-side, which is the difference between
-# moving a few hundred megabytes and a few hundred gigabytes.
-CHUNK_M = 5000
+# moving a few hundred megabytes and a few hundred gigabytes. It also serves
+# large subsets happily — 40 km at 5 m came back in 27 s — and fewer, bigger
+# requests beat many small ones, so the default chunk is generous.
+DEFAULT_CHUNK_KM = 20
 NODATA = -9999.0
 
 
@@ -107,6 +109,14 @@ def main() -> None:
     ap.add_argument("--out", required=True, help="output path without extension")
     ap.add_argument("--metres", type=float, default=2.0, help="target ground resolution")
     ap.add_argument("--keep", action="store_true", help="keep the intermediate chunks")
+    ap.add_argument(
+        "--chunk-km", type=int, default=DEFAULT_CHUNK_KM,
+        help="WCS request size; bigger is fewer round trips, up to what the service allows",
+    )
+    ap.add_argument(
+        "--cache", type=Path, default=None,
+        help="keep downloaded chunks here and reuse them, so an interrupted run resumes",
+    )
     args = ap.parse_args()
 
     for tool in ("gdaltransform", "gdalwarp", "gdalbuildvrt", "gdal_translate", "gdalinfo", "curl"):
@@ -114,6 +124,7 @@ def main() -> None:
             sys.exit(f"{tool} not found on PATH")
 
     west, south, east, north = args.bbox
+    chunk_m = args.chunk_km * 1000
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -125,31 +136,46 @@ def main() -> None:
             x, y = to_bng(west + (east - west) * i / 4, south + (north - south) * j / 4)
             xs.append(x)
             ys.append(y)
-    e0 = int(math.floor(min(xs) / CHUNK_M) * CHUNK_M)
-    e1 = int(math.ceil(max(xs) / CHUNK_M) * CHUNK_M)
-    n0 = int(math.floor(min(ys) / CHUNK_M) * CHUNK_M)
-    n1 = int(math.ceil(max(ys) / CHUNK_M) * CHUNK_M)
+    e0 = int(math.floor(min(xs) / chunk_m) * chunk_m)
+    e1 = int(math.ceil(max(xs) / chunk_m) * chunk_m)
+    n0 = int(math.floor(min(ys) / chunk_m) * chunk_m)
+    n1 = int(math.ceil(max(ys) / chunk_m) * chunk_m)
 
     # Ask the service for roughly the resolution we intend to keep. Pulling 1 m
     # to throw it away is just someone else's bandwidth.
     scale = min(1.0, 1.0 / args.metres)
-    chunks_x = (e1 - e0) // CHUNK_M
-    chunks_y = (n1 - n0) // CHUNK_M
+    chunks_x = (e1 - e0) // chunk_m
+    chunks_y = (n1 - n0) // chunk_m
+    total = chunks_x * chunks_y
     print(
         f"bbox {west},{south},{east},{north} -> BNG {e0},{n0}..{e1},{n1}\n"
-        f"{chunks_x}x{chunks_y} chunks of {CHUNK_M} m at scale {scale} "
+        f"{chunks_x}x{chunks_y} = {total} chunks of {chunk_m} m at scale {scale} "
         f"(~{args.metres} m ground)"
     )
 
     tmp = Path(tempfile.mkdtemp(prefix="argus-terrain-"))
+    # A cache turns a long run into a resumable one. Downloading tens of
+    # gigabytes twice because a laptop slept is not a good use of anyone's
+    # bandwidth, least of all a public agency's.
+    cache = args.cache
+    if cache:
+        cache.mkdir(parents=True, exist_ok=True)
     tiles: list[Path] = []
     try:
+        done = 0
         for i in range(chunks_x):
             for j in range(chunks_y):
-                ce0, cn0 = e0 + i * CHUNK_M, n0 + j * CHUNK_M
-                dest = tmp / f"c_{ce0}_{cn0}.tif"
-                print(f"  chunk {len(tiles) + 1}/{chunks_x * chunks_y}: E{ce0} N{cn0}", flush=True)
-                if fetch(ce0, cn0, ce0 + CHUNK_M, cn0 + CHUNK_M, scale, dest):
+                ce0, cn0 = e0 + i * chunk_m, n0 + j * chunk_m
+                done += 1
+                name = f"c_{ce0}_{cn0}_{chunk_m}_{scale}.tif"
+                cached = cache / name if cache else None
+                if cached and cached.exists() and cached.stat().st_size > 1024:
+                    print(f"  chunk {done}/{total}: E{ce0} N{cn0} (cached)", flush=True)
+                    tiles.append(cached)
+                    continue
+                dest = cached if cached else tmp / name
+                print(f"  chunk {done}/{total}: E{ce0} N{cn0}", flush=True)
+                if fetch(ce0, cn0, ce0 + chunk_m, cn0 + chunk_m, scale, dest):
                     tiles.append(dest)
         if not tiles:
             sys.exit("no chunks had LiDAR coverage — is the bbox inside England?")

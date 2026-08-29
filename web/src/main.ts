@@ -69,18 +69,22 @@ async function main(): Promise<void> {
   void (async () => {
     const base = ARGUS_BASE || window.location.origin;
     const meta = await fetchTerrainMeta(base, deviceToken());
-    if (!meta?.available || !meta.bounds) return;
-    if (meta.datum === "orthometric") await loadGeoid();
+    if (!meta?.available || !meta.bounds || meta.grids.length === 0) return;
+    if (meta.grids.some((g) => g.datum === "orthometric")) await loadGeoid();
     viewer.terrainProvider = new ArgusTerrainProvider(
       viewer.terrainProvider,
       meta,
       base,
       deviceToken(),
     ) as never;
-    if (meta.attribution) hud.addAttribution(meta.attribution);
+    for (const credit of new Set(meta.grids.map((g) => g.attribution))) {
+      if (credit) hud.addAttribution(credit);
+    }
+    const finest = Math.min(...meta.grids.map((g) => g.ground_metres));
     const [w, s, e, n] = meta.bounds;
     hud.note(
-      `terrain: ${meta.ground_metres ?? "?"} m self-hosted over ` +
+      `terrain: ${meta.grids.length} self-hosted grid` +
+        `${meta.grids.length === 1 ? "" : "s"}, finest ${finest} m, over ` +
         `${w.toFixed(2)},${s.toFixed(2)}..${e.toFixed(2)},${n.toFixed(2)}`,
     );
     viewer.scene.requestRender();

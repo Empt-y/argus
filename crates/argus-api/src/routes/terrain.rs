@@ -35,44 +35,66 @@ pub const TILE_SIZE: usize = 65;
 pub const MIN_LEVEL: u32 = 8;
 pub const MAX_LEVEL: u32 = 16;
 
+/// One prepared survey.
+#[derive(Serialize)]
+pub struct GridMeta {
+    /// `[west, south, east, north]`, degrees.
+    pub bounds: [f64; 4],
+    /// `"orthometric"` or `"ellipsoidal"`. A client that ignores this will draw
+    /// southern England about 46 m underground.
+    pub datum: String,
+    pub attribution: String,
+    pub ground_metres: f64,
+}
+
 #[derive(Serialize)]
 pub struct TerrainMeta {
     pub available: bool,
-    /// `[west, south, east, north]`, degrees.
+    /// Every grid, finest first — the client needs them individually because a
+    /// tile is only ours when one grid covers it *whole*, and the union of two
+    /// separate surveys can enclose a tile that neither one does.
+    pub grids: Vec<GridMeta>,
+    /// The envelope of all grids. A quick reject, never a coverage test.
     pub bounds: Option<[f64; 4]>,
     pub tile_size: usize,
     pub min_level: u32,
     pub max_level: u32,
-    /// `"orthometric"` or `"ellipsoidal"`. A client that ignores this will draw
-    /// southern England about 46 m underground.
-    pub datum: Option<String>,
-    pub attribution: Option<String>,
-    pub ground_metres: Option<f64>,
 }
 
 pub async fn meta(State(state): State<ApiState>) -> Json<TerrainMeta> {
-    let Some(dem) = state.dem.as_ref() else {
-        return Json(TerrainMeta {
-            available: false,
-            bounds: None,
-            tile_size: TILE_SIZE,
-            min_level: MIN_LEVEL,
-            max_level: MAX_LEVEL,
-            datum: None,
-            attribution: None,
-            ground_metres: None,
-        });
-    };
-    let m = dem.meta();
+    let grids: Vec<GridMeta> = state
+        .dems
+        .iter()
+        .map(|dem| {
+            let m = dem.meta();
+            GridMeta {
+                bounds: [m.west, m.south, m.east, m.north],
+                datum: m.datum.clone(),
+                attribution: m.attribution.clone(),
+                ground_metres: m.ground_metres,
+            }
+        })
+        .collect();
+
+    let bounds = grids.iter().fold(None, |acc: Option<[f64; 4]>, g| {
+        Some(match acc {
+            None => g.bounds,
+            Some(b) => [
+                b[0].min(g.bounds[0]),
+                b[1].min(g.bounds[1]),
+                b[2].max(g.bounds[2]),
+                b[3].max(g.bounds[3]),
+            ],
+        })
+    });
+
     Json(TerrainMeta {
-        available: true,
-        bounds: Some([m.west, m.south, m.east, m.north]),
+        available: !grids.is_empty(),
+        grids,
+        bounds,
         tile_size: TILE_SIZE,
         min_level: MIN_LEVEL,
         max_level: MAX_LEVEL,
-        datum: Some(m.datum.clone()),
-        attribution: Some(m.attribution.clone()),
-        ground_metres: Some(m.ground_metres),
     })
 }
 
@@ -97,21 +119,25 @@ pub async fn tile(
     State(state): State<ApiState>,
     Path((z, x, y)): Path<(u32, u32, u32)>,
 ) -> Response {
-    let Some(dem) = state.dem.as_ref() else {
+    if state.dems.is_empty() {
         return StatusCode::NO_CONTENT.into_response();
-    };
+    }
     if !(MIN_LEVEL..=MAX_LEVEL).contains(&z) {
         return StatusCode::NO_CONTENT.into_response();
     }
     let Some((west, south, east, north)) = tile_rect(z, x, y) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    // Whole coverage only. Half a tile of real heights and half invented would
-    // be worse than deferring to the fallback for all of it.
-    if !dem.covers(west, south, east, north) {
-        return StatusCode::NO_CONTENT.into_response();
-    }
-    let Some(heights) = dem.heightmap(west, south, east, north, TILE_SIZE) else {
+    // Whole coverage only, finest grid first. Half a tile of real heights and
+    // half invented would be worse than deferring to the fallback for all of
+    // it, and a grid that covers the tile but holds nothing but nodata there —
+    // an estuary, say — is not an answer either, so keep looking.
+    let heights = state
+        .dems
+        .iter()
+        .filter(|dem| dem.covers(west, south, east, north))
+        .find_map(|dem| dem.heightmap(west, south, east, north, TILE_SIZE));
+    let Some(heights) = heights else {
         return StatusCode::NO_CONTENT.into_response();
     };
 
