@@ -27,6 +27,7 @@ import {
   OpenStreetMapImageryProvider,
   Rectangle,
   ScreenSpaceEventType,
+  Terrain,
   Viewer,
 } from "cesium";
 import type { ClientKeys } from "../net/types";
@@ -35,6 +36,8 @@ export interface ViewerBundle {
   viewer: Viewer;
   /** Whether the photorealistic tileset is available in this session. */
   photoreal: boolean;
+  /** Whether real terrain is loaded, rather than the plain ellipsoid. */
+  terrain: boolean;
 }
 
 export function createViewer(
@@ -48,7 +51,16 @@ export function createViewer(
     Ion.defaultAccessToken = keys.cesium_ion_token;
   }
 
+  // Real terrain the moment a token exists, and the plain ellipsoid otherwise.
+  // This is the seam `resolveHeight` was written against: with terrain the
+  // `above_ground` datum and ground contacts become resolvable, and without it
+  // they are honestly approximate.
+  const terrain = keys?.cesium_ion_token
+    ? Terrain.fromWorldTerrain({ requestVertexNormals: true })
+    : undefined;
+
   const viewer = new Viewer(container, {
+    ...(terrain ? { terrain } : {}),
     // Keyless. OSM's tile policy asks for a real user agent and modest volume,
     // which a single self-hosted client satisfies comfortably.
     baseLayer: false,
@@ -94,7 +106,11 @@ export function createViewer(
     orientation: { heading: 0, pitch: CesiumMath.toRadians(-70), roll: 0 },
   });
 
-  return { viewer, photoreal: Boolean(keys?.google_maps_api_key) };
+  return {
+    viewer,
+    photoreal: Boolean(keys?.google_maps_api_key),
+    terrain: Boolean(terrain),
+  };
 }
 
 /**

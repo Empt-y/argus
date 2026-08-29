@@ -47,10 +47,11 @@ async function main(): Promise<void> {
     hud.note(`client keys unavailable (${error.code})`);
   }
 
-  const { viewer, photoreal } = createViewer(container, keys);
+  const { viewer, photoreal, terrain } = createViewer(container, keys);
   const renderer = new LayerRenderer(viewer);
   const labels = new LabelArbiter(viewer);
   hud.setPhotoreal(photoreal);
+  if (!terrain) hud.note("flat ellipsoid — no Cesium ion token configured");
   const sensors = new SensorStyles(viewer);
   hud.setSensorStyles(sensors);
 
@@ -115,7 +116,7 @@ async function main(): Promise<void> {
     }
     // Shapes, tracks and modelled rings carry decorated ids (`id#0`, `id~0`,
     // `id@modeled`); the contact they belong to is the part before it.
-    const base = id.split(/[#~@]/)[0] ?? id;
+    const base = id.split(/[#~@%]/)[0] ?? id;
     const entity = renderer.entity(base);
     if (!entity) {
       renderer.select(null);

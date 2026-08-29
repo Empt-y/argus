@@ -26,12 +26,14 @@ import {
   Math as CesiumMath,
   PolygonHierarchy,
   ClassificationType,
+  PolylineDashMaterialProperty,
   VerticalOrigin,
   type Viewer,
 } from "cesium";
 import { resolveHeight } from "../geo/datum";
 import { screenRotation } from "../geo/heading";
 import { chevron } from "./icons";
+import { circleRing } from "../geo/spherical";
 import type { Entity, GeoJsonGeometry, Layer, Quality } from "../net/types";
 import { entityId } from "../net/types";
 
@@ -59,6 +61,17 @@ export class LayerRenderer {
   readonly #layers = new Map<string, Layer>();
   readonly #entities = new Map<string, Entity>();
   readonly #rotations = new Map<string, number>();
+  /**
+   * The extra Cesium entity ids created for one contact.
+   *
+   * A shape becomes several drawn entities — a fill, an outline, a line per
+   * part — because Cesium cannot outline a ground primitive and each piece
+   * needs its own id. Redrawing without removing the previous pieces made
+   * `EntityCollection.add` throw on the duplicate id, and that exception
+   * propagated out through the whole delta batch, so every contact after the
+   * first repeated shape was silently dropped.
+   */
+  readonly #parts = new Map<string, string[]>();
   #selected: string | null = null;
 
   constructor(private readonly viewer: Viewer) {}
@@ -92,12 +105,22 @@ export class LayerRenderer {
     for (const source of this.#sources.values()) source.entities.removeAll();
     this.#entities.clear();
     this.#rotations.clear();
+    this.#parts.clear();
     this.upsert(entities);
   }
 
   /** Apply a delta. */
   upsert(entities: Entity[]): void {
-    for (const entity of entities) this.#draw(entity);
+    for (const entity of entities) {
+      // One malformed contact must not cost the other four hundred in the same
+      // frame. This is belt-and-braces on top of the duplicate-id fix: whatever
+      // Cesium rejects next, the rest of the delta still lands.
+      try {
+        this.#draw(entity);
+      } catch (error) {
+        console.warn("argus: could not draw", entityId(entity), error);
+      }
+    }
     this.viewer.scene.requestRender();
   }
 
@@ -115,6 +138,7 @@ export class LayerRenderer {
       const age = now - Date.parse(entity.observed_at);
       if (age > olderThanMs) {
         const layer = this.#sources.get(entity.layer_id);
+        if (layer) this.#clearParts(layer, id);
         layer?.entities.removeById(id);
         layer?.entities.removeById(`${id}@modeled`);
         this.#entities.delete(id);
@@ -322,17 +346,31 @@ export class LayerRenderer {
 
     const target = existing ?? new CesiumEntity({ id: ringId });
     target.position = Cartesian3.fromDegrees(entity.lon, entity.lat) as never;
+    // A ground primitive: `classificationType` with no height at all, which is
+    // what drapes it over terrain. Setting `heightReference` instead is the
+    // trap — Cesium ignores it without an explicit height and silently draws
+    // the shape at ellipsoidal zero, which over most land is underground.
     target.ellipse = {
       semiMajorAxis: radius as never,
       semiMinorAxis: radius as never,
       material: color.withAlpha(0.07) as never,
-      outline: true as never,
-      outlineColor: color.withAlpha(0.55) as never,
-      outlineWidth: 1 as never,
-      // Clamped, because the area is a footprint on the ground rather than
-      // anything at the event's depth.
-      heightReference: HeightReference.CLAMP_TO_GROUND as never,
       classificationType: ClassificationType.TERRAIN as never,
+    } as never;
+    // The outline has to be a separate clamped polyline: Cesium cannot outline
+    // a ground primitive, and says so rather than failing, which is easy to
+    // miss in a console full of tile requests.
+    target.polyline = {
+      positions: Cartesian3.fromDegreesArray(
+        circleRing(entity.lat, entity.lon, radius),
+      ) as never,
+      width: 1.5 as never,
+      // Dashed, so a modelled area cannot be mistaken for a measured one even
+      // before anybody reads the card.
+      material: new PolylineDashMaterialProperty({
+        color: color.withAlpha(0.75),
+        dashLength: 12,
+      }) as never,
+      clampToGround: true as never,
     } as never;
     if (!existing) source.entities.add(target);
   }
@@ -343,12 +381,13 @@ export class LayerRenderer {
     entity: Entity,
     color: Color,
   ): void {
-    const existing = source.entities.getById(id);
-    if (existing) source.entities.remove(existing);
+    this.#clearParts(source, id);
     const geom = entity.geom;
     if (!geom) return;
+    const parts: string[] = [];
 
     for (const [index, ring] of polygons(geom).entries()) {
+      parts.push(index === 0 ? id : `${id}#${index}`);
       source.entities.add(
         new CesiumEntity({
           id: index === 0 ? id : `${id}#${index}`,
@@ -359,17 +398,33 @@ export class LayerRenderer {
             material: color.withAlpha(
               0.22 * QUALITY_ALPHA[entity.quality],
             ) as never,
-            outline: true as never,
-            outlineColor: color as never,
-            // Areas are meaningful at the surface; lifting them off it just
-            // makes them float over the thing they describe.
-            heightReference: HeightReference.CLAMP_TO_GROUND as never,
+            // Draped on terrain, not floated over it. `classificationType`
+            // with no height is what does that; `heightReference` is ignored
+            // without an explicit height, and the shape then renders at
+            // ellipsoidal zero — under the ground across most of a continent.
+            classificationType: ClassificationType.TERRAIN as never,
+          } as never,
+        }),
+      );
+    }
+
+    for (const [index, ring] of polygons(geom).entries()) {
+      parts.push(`${id}%${index}`);
+      source.entities.add(
+        new CesiumEntity({
+          id: `${id}%${index}`,
+          polyline: {
+            positions: Cartesian3.fromDegreesArray(ring.flat()) as never,
+            width: 1.5 as never,
+            material: color.withAlpha(0.85) as never,
+            clampToGround: true as never,
           } as never,
         }),
       );
     }
 
     for (const [index, line] of lines(geom).entries()) {
+      parts.push(`${id}~${index}`);
       source.entities.add(
         new CesiumEntity({
           id: `${id}~${index}`,
@@ -382,6 +437,16 @@ export class LayerRenderer {
         }),
       );
     }
+
+    this.#parts.set(id, parts);
+  }
+
+  /** Drop every drawn piece belonging to one contact. */
+  #clearParts(source: CustomDataSource, id: string): void {
+    for (const part of this.#parts.get(id) ?? [id]) {
+      source.entities.removeById(part);
+    }
+    this.#parts.delete(id);
   }
 
   /** Colour for a contact right now: layer hue, quality alpha, age fade. */
