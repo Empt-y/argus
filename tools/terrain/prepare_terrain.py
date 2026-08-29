@@ -55,9 +55,19 @@ COVERAGE = (
     "13787b9a-26a4-4775-8523-806d13af58fc__Lidar_Composite_Elevation_DTM_1m"
 )
 # The service is happy to scale server-side, which is the difference between
-# moving a few hundred megabytes and a few hundred gigabytes. It also serves
-# large subsets happily — 40 km at 5 m came back in 27 s — and fewer, bigger
-# requests beat many small ones, so the default chunk is generous.
+# moving a few hundred megabytes and a few hundred gigabytes.
+#
+# It is NOT happy to be asked for large areas, and it does not say so. A 40 km
+# subset returns HTTP 200, the right dimensions, plausible statistics — and
+# about a third of the pixels quietly missing. The same ground requested as
+# 20 km or smaller comes back complete, and so does a full-resolution 5 km box,
+# so the data is there and the request size is what loses it. Measured on
+# 2026-08-30 over Reading: 5/10/20 km all 100% valid, 40 km 61-66%.
+#
+# This is why every chunk is checked below rather than trusted. A silent
+# partial response is the worst kind: it builds a terrain grid full of holes
+# that looks entirely successful.
+MAX_CHUNK_KM = 20
 DEFAULT_CHUNK_KM = 20
 NODATA = -9999.0
 
@@ -103,6 +113,24 @@ def fetch(east0: int, north0: int, east1: int, north1: int, scale: float, dest: 
     return True
 
 
+def valid_percent(path: Path) -> float | None:
+    """How much of a chunk actually holds elevation, per GDAL's own statistics.
+
+    Worth logging for every chunk. A coastal or Welsh chunk is legitimately part
+    nodata, so this cannot be a pass/fail threshold — but a run where inland
+    chunks come back at 60% is a run that has hit the partial-response problem,
+    and the number is the only place that shows.
+    """
+    proc = subprocess.run(["gdalinfo", "-stats", str(path)], capture_output=True, text=True)
+    for line in proc.stdout.splitlines():
+        if "STATISTICS_VALID_PERCENT" in line:
+            try:
+                return float(line.split("=", 1)[1])
+            except ValueError:
+                return None
+    return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--bbox", nargs=4, type=float, required=True, metavar=("W", "S", "E", "N"))
@@ -111,7 +139,7 @@ def main() -> None:
     ap.add_argument("--keep", action="store_true", help="keep the intermediate chunks")
     ap.add_argument(
         "--chunk-km", type=int, default=DEFAULT_CHUNK_KM,
-        help="WCS request size; bigger is fewer round trips, up to what the service allows",
+        help=f"WCS request size in km (max {MAX_CHUNK_KM}; larger silently loses data)",
     )
     ap.add_argument(
         "--cache", type=Path, default=None,
@@ -122,6 +150,12 @@ def main() -> None:
     for tool in ("gdaltransform", "gdalwarp", "gdalbuildvrt", "gdal_translate", "gdalinfo", "curl"):
         if not shutil.which(tool):
             sys.exit(f"{tool} not found on PATH")
+
+    if args.chunk_km > MAX_CHUNK_KM:
+        sys.exit(
+            f"--chunk-km {args.chunk_km} exceeds {MAX_CHUNK_KM}: the service answers larger "
+            "requests with HTTP 200 and roughly a third of the pixels missing"
+        )
 
     west, south, east, north = args.bbox
     chunk_m = args.chunk_km * 1000
@@ -174,8 +208,10 @@ def main() -> None:
                     tiles.append(cached)
                     continue
                 dest = cached if cached else tmp / name
-                print(f"  chunk {done}/{total}: E{ce0} N{cn0}", flush=True)
+                print(f"  chunk {done}/{total}: E{ce0} N{cn0}", end="", flush=True)
                 if fetch(ce0, cn0, ce0 + chunk_m, cn0 + chunk_m, scale, dest):
+                    pct = valid_percent(dest)
+                    print(f"  ({pct:.0f}% covered)" if pct is not None else "")
                     tiles.append(dest)
         if not tiles:
             sys.exit("no chunks had LiDAR coverage — is the bbox inside England?")
