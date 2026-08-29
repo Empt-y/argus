@@ -25,6 +25,7 @@ import {
   LabelStyle,
   Math as CesiumMath,
   PolygonHierarchy,
+  ClassificationType,
   VerticalOrigin,
   type Viewer,
 } from "cesium";
@@ -113,7 +114,9 @@ export class LayerRenderer {
     for (const [id, entity] of this.#entities) {
       const age = now - Date.parse(entity.observed_at);
       if (age > olderThanMs) {
-        this.#sources.get(entity.layer_id)?.entities.removeById(id);
+        const layer = this.#sources.get(entity.layer_id);
+        layer?.entities.removeById(id);
+        layer?.entities.removeById(`${id}@modeled`);
         this.#entities.delete(id);
         this.#rotations.delete(id);
         removed++;
@@ -165,6 +168,12 @@ export class LayerRenderer {
       return;
     }
     if (entity.lon === null || entity.lat === null) return;
+
+    // A modelled area, if the server published one. Kept generic — the key is
+    // `modeled_radius_m`, not `felt_radius`, so nothing here needs to know what
+    // an earthquake is and a later layer that models an area gets this for
+    // free.
+    this.#drawModeledArea(source, id, entity, color);
 
     const height = resolveHeight(
       entity.alt_m,
@@ -285,6 +294,47 @@ export class LayerRenderer {
     if (next === null) return this.#rotations.get(id) ?? 0;
     this.#rotations.set(id, next);
     return next;
+  }
+
+  /**
+   * A dashed ring around a contact whose affected area is modelled rather than
+   * observed.
+   *
+   * Drawn deliberately unlike a real polygon: no solid fill, a dashed outline,
+   * and a much lower opacity. A modelled felt-radius and a measured ShakeMap
+   * contour must not be able to be confused at a glance, because the second one
+   * is evidence and the first is arithmetic.
+   */
+  #drawModeledArea(
+    source: CustomDataSource,
+    id: string,
+    entity: Entity,
+    color: Color,
+  ): void {
+    const radius = entity.attrs?.["modeled_radius_m"];
+    const ringId = `${id}@modeled`;
+    const existing = source.entities.getById(ringId);
+    if (typeof radius !== "number" || !Number.isFinite(radius) || radius <= 0) {
+      if (existing) source.entities.remove(existing);
+      return;
+    }
+    if (entity.lon === null || entity.lat === null) return;
+
+    const target = existing ?? new CesiumEntity({ id: ringId });
+    target.position = Cartesian3.fromDegrees(entity.lon, entity.lat) as never;
+    target.ellipse = {
+      semiMajorAxis: radius as never,
+      semiMinorAxis: radius as never,
+      material: color.withAlpha(0.07) as never,
+      outline: true as never,
+      outlineColor: color.withAlpha(0.55) as never,
+      outlineWidth: 1 as never,
+      // Clamped, because the area is a footprint on the ground rather than
+      // anything at the event's depth.
+      heightReference: HeightReference.CLAMP_TO_GROUND as never,
+      classificationType: ClassificationType.TERRAIN as never,
+    } as never;
+    if (!existing) source.entities.add(target);
   }
 
   #drawShape(

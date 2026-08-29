@@ -10,6 +10,7 @@ pub mod entity;
 pub mod geo;
 pub mod layer;
 pub mod orbital;
+pub mod seismic;
 pub mod source;
 
 pub use cache::{GeometryCache, MemoryGeometryCache};

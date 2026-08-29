@@ -139,6 +139,17 @@ fn decode_feature(f: Feature, source_id: &SourceId) -> Option<Observation> {
 
     let attrs = serde_json::json!({
         "magnitude": f.properties.mag,
+        // A modelled perceptible-shaking radius, so a client can draw the area
+        // an event was felt over instead of a dot at the epicentre. Published
+        // as an attribute rather than as geometry on purpose: the store holds
+        // what the network reported, and a modelled circle written into `geom`
+        // would be indistinguishable from a real ShakeMap contour later.
+        //
+        // `modeled_radius_m` is the generic key the renderers act on, so a
+        // layer does not need special-casing in a client; `modeled_radius_kind`
+        // says what it means. See argus_core::seismic.
+        "modeled_radius_m": f.properties.mag.and_then(argus_core::seismic::felt_radius_m),
+        "modeled_radius_kind": "felt_shaking",
         "magnitude_type": f.properties.magtype,
         "place": f.properties.flynn_region,
         "event_type": f.properties.evtype,

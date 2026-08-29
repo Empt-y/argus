@@ -113,9 +113,9 @@ async function main(): Promise<void> {
       card.close();
       return;
     }
-    // Shape and track entities carry decorated ids (`id#0`, `id~0`); the
-    // contact they belong to is the part before the decoration.
-    const base = id.split(/[#~]/)[0] ?? id;
+    // Shapes, tracks and modelled rings carry decorated ids (`id#0`, `id~0`,
+    // `id@modeled`); the contact they belong to is the part before it.
+    const base = id.split(/[#~@]/)[0] ?? id;
     const entity = renderer.entity(base);
     if (!entity) {
       renderer.select(null);

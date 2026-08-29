@@ -134,6 +134,15 @@ export class EntityCard {
     if (entity.vrate_mps !== null) {
       rows.push(["vertical", `${entity.vrate_mps > 0 ? "+" : ""}${entity.vrate_mps.toFixed(1)} m/s`]);
     }
+    const radius = entity.attrs?.["modeled_radius_m"];
+    if (typeof radius === "number" && Number.isFinite(radius)) {
+      // Named as modelled in the card as well as drawn as modelled on the
+      // globe. Someone reading a number off a panel should not have to
+      // remember which rings were arithmetic.
+      const kind = String(entity.attrs?.["modeled_radius_kind"] ?? "area")
+        .replace(/_/g, " ");
+      rows.push(["modelled", `${kind} ~${Math.round(radius / 1000)} km radius (estimated)`]);
+    }
     for (const [key, label] of PROMOTED) {
       const value = entity.attrs?.[key];
       if (value !== undefined && value !== null && value !== "") {

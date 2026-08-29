@@ -519,3 +519,74 @@ async fn enrichment_cannot_resurrect_a_stale_position() {
         found.lon
     );
 }
+
+#[tokio::test]
+async fn an_upstream_revision_of_an_event_is_applied() {
+    // USGS revises magnitude and location for hours after an event, which is
+    // the stated reason those feeds are re-polled at all. The live-state guard
+    // used to discard every one of those re-polls, so an M4.0 later corrected
+    // to M4.6 stayed 4.0 for the life of the row.
+    let (store, _db) = require_db!();
+    let origin = Utc::now() - Duration::minutes(20);
+    let quake = |mag: f64| {
+        Observation::new(
+            SourceId::new("test-adsb"),
+            EntityId::new(argus_core::EntityKind::Event, "us7000abcd"),
+            origin,
+            Quality::Live,
+        )
+        .with_position(Position::surface(-97.5, 30.5))
+        .with_attrs(serde_json::json!({ "magnitude": mag }))
+    };
+
+    store.write_observations(&[quake(4.0)]).await.expect("first report");
+    store.write_observations(&[quake(4.6)]).await.expect("revision");
+
+    let found = store
+        .entity(&EntityId::new(argus_core::EntityKind::Event, "us7000abcd"))
+        .await
+        .expect("query")
+        .expect("exists");
+    assert_eq!(
+        found.attrs["magnitude"],
+        serde_json::json!(4.6),
+        "the revision must win"
+    );
+}
+
+#[tokio::test]
+async fn an_unchanged_re_poll_does_not_touch_the_row() {
+    // The other half: allowing revisions must not mean every poll rewrites
+    // every event. `updated_at` drives the delta stream, so a no-op re-poll
+    // that bumped it would resend several hundred unchanged alerts every cycle.
+    let (store, _db) = require_db!();
+    let origin = Utc::now() - Duration::minutes(20);
+    let event = || {
+        Observation::new(
+            SourceId::new("test-adsb"),
+            EntityId::new(argus_core::EntityKind::Event, "steady-1"),
+            origin,
+            Quality::Live,
+        )
+        .with_position(Position::surface(-97.5, 30.5))
+        .with_attrs(serde_json::json!({ "magnitude": 3.3 }))
+    };
+
+    store.write_observations(&[event()]).await.expect("first");
+    let first: chrono::DateTime<Utc> = sqlx::query_scalar(
+        "SELECT updated_at FROM entities WHERE entity_key = 'steady-1'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .expect("read updated_at");
+
+    store.write_observations(&[event()]).await.expect("identical re-poll");
+    let second: chrono::DateTime<Utc> = sqlx::query_scalar(
+        "SELECT updated_at FROM entities WHERE entity_key = 'steady-1'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .expect("read updated_at");
+
+    assert_eq!(first, second, "an identical re-poll must not touch the row");
+}

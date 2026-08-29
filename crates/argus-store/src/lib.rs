@@ -302,16 +302,29 @@ impl Store {
         // guard, a late-arriving stale fix overwrites a newer one and the
         // contact visibly jumps backwards.
         //
-        // The second clause exists because that guard, alone, is too strict for
-        // immutable events. A weather alert's `observed_at` is the moment the
-        // office issued it and never advances, so an alert first seen without a
-        // polygon — which is 94% of them, since NWS issues by zone id — could
-        // never gain one on a later poll once the zone boundaries had been
-        // resolved. It was frozen shapeless for its whole life. So an update at
-        // the *same* instant is accepted when, and only when, it strictly adds
-        // geometry the stored row does not have. That cannot resurrect a stale
-        // position, because it changes nothing about a row that already has a
-        // shape.
+        // That guard alone is too strict for immutable events, whose
+        // `observed_at` is an origin or issue time and never advances. Two
+        // things were silently lost to it:
+        //
+        //   * A weather alert first seen without a polygon — 94% of them, since
+        //     NWS issues by zone id — could never gain one once its zones
+        //     resolved. It was frozen shapeless for life.
+        //   * Every revision an upstream publishes. USGS revises magnitude and
+        //     location for hours after an event; `0003_observation_dedupe.sql`
+        //     names that as the reason those feeds must be re-polled at all. The
+        //     re-polls happened and the revisions were then thrown away here, so
+        //     an M4.0 later corrected to M4.6 stayed 4.0 forever.
+        //
+        // So a same-instant write also wins when it is either a revision from
+        // the same source, or another source supplying a shape this row lacks.
+        // Neither can resurrect a stale position: a revision is by definition
+        // the newest word from the source that owns the row, and the geometry
+        // clause changes nothing about a row that already has a shape.
+        //
+        // The content comparison is what keeps this from being expensive. A
+        // re-poll that says exactly what the store already holds updates
+        // nothing, so `updated_at` does not move and the delta stream does not
+        // resend several hundred unchanged events every poll.
         sqlx::query(
             r#"
             INSERT INTO entities (
@@ -360,8 +373,17 @@ impl Store {
                 geom        = EXCLUDED.geom
             WHERE EXCLUDED.observed_at > entities.observed_at
                OR (EXCLUDED.observed_at = entities.observed_at
-                   AND entities.geom IS NULL
-                   AND EXCLUDED.geom IS NOT NULL)
+                   AND (
+                     -- A revision from the source that owns this row.
+                     (EXCLUDED.source_id = entities.source_id
+                      AND (EXCLUDED.attrs IS DISTINCT FROM entities.attrs
+                           OR EXCLUDED.label IS DISTINCT FROM entities.label))
+                     -- Or a shape for a row that had none. Compared as NULL /
+                     -- NOT NULL rather than by value: PostGIS `=` is a bounding
+                     -- box test, so two genuinely different polygons with the
+                     -- same extent would compare equal.
+                     OR (entities.geom IS NULL AND EXCLUDED.geom IS NOT NULL)
+                   ))
             "#,
         )
         .bind(&observed_at)
