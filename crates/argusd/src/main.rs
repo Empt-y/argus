@@ -258,7 +258,8 @@ fn build_sources(
     }
     if enabled("celestrak") {
         sources.push(std::sync::Arc::new(
-            argus_ingest::sources::CelestrakSatellites::new(http.clone()),
+            argus_ingest::sources::CelestrakSatellites::new(http.clone())
+                .persisting_in(&config.state_dir),
         ));
     }
 

@@ -41,6 +41,12 @@ pub struct Config {
     pub client_keys: ClientKeys,
     #[serde(default)]
     pub client: ClientConfig,
+    /// Where the daemon keeps state that must outlive a restart but does not
+    /// belong in the database — currently orbital element sets. Not a cache in
+    /// the throwaway sense: losing it costs real availability, because it is
+    /// what keeps a layer alive while its upstream is unreachable.
+    #[serde(default = "default_state_dir")]
+    pub state_dir: PathBuf,
     /// Areas where capture runs at full cadence.
     #[serde(default, rename = "aoi")]
     pub aois: Vec<AoiConfig>,
@@ -105,6 +111,10 @@ pub struct DatabaseConfig {
     pub url: String,
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
+}
+
+fn default_state_dir() -> PathBuf {
+    PathBuf::from("data/state")
 }
 
 const fn default_max_connections() -> u32 {

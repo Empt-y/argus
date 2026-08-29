@@ -11,6 +11,15 @@
 //! is measured. A satellite's position is the output of a physics model fed by
 //! an element set that was itself fitted to observations hours or days ago, and
 //! the client must be able to say so.
+//!
+//! **The element set is kept on disk, and that is an availability feature, not
+//! an optimisation.** Elements stay usable for about a week, so an upstream
+//! outage of a few hours should be invisible: there is nothing to fetch that we
+//! do not already have. Holding them only in memory broke that promise in the
+//! least obvious way — the layer survived CelesTrak being down and then died
+//! the moment the daemon restarted, because a restart threw away a catalogue
+//! that was still perfectly good. Observed on 2026-08-30, with celestrak.org
+//! unreachable and the layer going empty on restart rather than coasting.
 
 use crate::http::HttpClient;
 use argus_core::entity::{AltitudeDatum, EntityId, EntityKind, Observation, Position, Quality};
@@ -58,8 +67,12 @@ pub struct CelestrakSatellites {
     http: HttpClient,
     groups: Vec<String>,
     cache: RwLock<Option<ElementCache>>,
+    /// Where the last good element set is kept between runs. `None` disables
+    /// persistence, which is what the tests use.
+    store_path: Option<std::path::PathBuf>,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct ElementCache {
     fetched_at: DateTime<Utc>,
     elements: Vec<sgp4::Elements>,
@@ -99,6 +112,55 @@ impl CelestrakSatellites {
             },
             http,
             cache: RwLock::new(None),
+            store_path: None,
+        }
+    }
+
+    /// Keep the element set in `dir`, so an upstream outage that spans a
+    /// restart costs nothing.
+    #[must_use]
+    pub fn persisting_in(mut self, dir: &std::path::Path) -> Self {
+        self.store_path = Some(dir.join("celestrak-elements.json"));
+        self
+    }
+
+    /// The last element set written to disk, if it is still worth propagating.
+    async fn load_stored(&self) -> Option<ElementCache> {
+        let path = self.store_path.as_ref()?;
+        let text = tokio::fs::read_to_string(path).await.ok()?;
+        let cache: ElementCache = serde_json::from_str(&text).ok()?;
+        if cache.elements.is_empty() {
+            return None;
+        }
+        // Age is judged per element when propagating, but a wholesale refusal
+        // here keeps a truly ancient file from looking like a live source.
+        if Utc::now() - cache.fetched_at > MAX_ELEMENT_AGE {
+            tracing::warn!(
+                "celestrak: stored elements are older than {} days, ignoring",
+                MAX_ELEMENT_AGE.num_days()
+            );
+            return None;
+        }
+        Some(cache)
+    }
+
+    async fn to_disk(&self, cache: &ElementCache) {
+        let Some(path) = self.store_path.as_ref() else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+        // Write beside and rename, so a daemon killed mid-write leaves the
+        // previous good catalogue rather than a truncated one.
+        let tmp = path.with_extension("json.tmp");
+        match serde_json::to_vec(cache) {
+            Ok(bytes) => {
+                if tokio::fs::write(&tmp, &bytes).await.is_ok() {
+                    let _ = tokio::fs::rename(&tmp, path).await;
+                }
+            }
+            Err(err) => tracing::warn!("celestrak: could not serialise elements: {err}"),
         }
     }
 
@@ -108,6 +170,27 @@ impl CelestrakSatellites {
             && Utc::now() - cache.fetched_at < ELEMENTS_TTL
         {
             return Ok(cache.elements.clone());
+        }
+
+        // Nothing in memory yet: a fresh start, or a restart. Anything on disk
+        // is worth adopting before reaching for the network, and is what makes
+        // a restart during an outage a non-event.
+        if self.cache.read().await.is_none()
+            && let Some(stored) = self.load_stored().await
+        {
+            let age = Utc::now() - stored.fetched_at;
+            tracing::info!(
+                objects = stored.elements.len(),
+                age_hours = age.num_minutes() as f64 / 60.0,
+                "celestrak: adopted stored element set"
+            );
+            let elements = stored.elements.clone();
+            *self.cache.write().await = Some(stored);
+            if age < ELEMENTS_TTL {
+                return Ok(elements);
+            }
+            // Older than the refresh interval: try upstream, but we now have
+            // something to fall back to if it will not answer.
         }
 
         // Groups overlap — a station is also visible, GNSS birds sit in the GEO
@@ -134,8 +217,20 @@ impl CelestrakSatellites {
 
         if fetched.is_empty() {
             // An empty catalogue is a bad response, not a world with no
-            // satellites in it. Keep whatever we already hold and surface the
-            // first real reason rather than a generic decode error.
+            // satellites in it. Elements outlive an outage comfortably, so
+            // coast on what we hold and say so, rather than blanking a layer
+            // over a few hours of someone else's downtime.
+            if let Some(cache) = self.cache.read().await.as_ref() {
+                let age = Utc::now() - cache.fetched_at;
+                if age < MAX_ELEMENT_AGE {
+                    tracing::warn!(
+                        objects = cache.elements.len(),
+                        age_hours = age.num_minutes() as f64 / 60.0,
+                        "celestrak unreachable; propagating from held elements"
+                    );
+                    return Ok(cache.elements.clone());
+                }
+            }
             return Err(failures.into_iter().next().map_or_else(
                 || SourceError::Decode("CelesTrak returned an empty element set".into()),
                 SourceError::Transport,
@@ -146,11 +241,12 @@ impl CelestrakSatellites {
                 failures.len(), self.groups.len(), failures.join("; "));
         }
 
-        let mut cache = self.cache.write().await;
-        *cache = Some(ElementCache {
+        let fresh = ElementCache {
             fetched_at: Utc::now(),
             elements: fetched.clone(),
-        });
+        };
+        self.to_disk(&fresh).await;
+        *self.cache.write().await = Some(fresh);
         Ok(fetched)
     }
 }
@@ -277,6 +373,75 @@ mod tests {
 
     fn elements() -> Vec<sgp4::Elements> {
         serde_json::from_str(FIXTURE).expect("fixture parses as the live wire format")
+    }
+
+    /// A scratch directory that cleans up after itself.
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "argus-celestrak-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn a_held_element_set_survives_a_restart() {
+        // The failure this prevents: CelesTrak goes down, the daemon restarts
+        // for an unrelated reason, and a catalogue that was still good for
+        // another six days is gone. Observed for real on 2026-08-30.
+        let dir = scratch("restart");
+        let http = HttpClient::new(std::time::Duration::from_secs(5)).unwrap();
+
+        let first = CelestrakSatellites::new(http.clone()).persisting_in(&dir);
+        first
+            .to_disk(&ElementCache {
+                fetched_at: Utc::now() - Duration::hours(2),
+                elements: elements(),
+            })
+            .await;
+
+        // A brand new source — as after a restart — with no network behind it.
+        let second = CelestrakSatellites::new(http).persisting_in(&dir);
+        let adopted = second.load_stored().await.expect("stored elements adopted");
+        assert_eq!(adopted.elements.len(), elements().len());
+
+        let obs = propagate_all(&adopted.elements, Utc::now(), &SourceId::new("celestrak"));
+        assert!(!obs.is_empty(), "held elements must still propagate");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn elements_past_their_useful_life_are_not_adopted() {
+        // Coasting is defensible for days and fiction after that. A week-old
+        // catalogue must read as a dead source, not a working one.
+        let dir = scratch("stale");
+        let source = CelestrakSatellites::new(HttpClient::new(std::time::Duration::from_secs(5)).unwrap()).persisting_in(&dir);
+        source
+            .to_disk(&ElementCache {
+                fetched_at: Utc::now() - MAX_ELEMENT_AGE - Duration::hours(1),
+                elements: elements(),
+            })
+            .await;
+        assert!(source.load_stored().await.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn persistence_is_optional() {
+        // Without a path configured nothing is written and nothing is read,
+        // which is what keeps the tests and any embedded use hermetic.
+        let source = CelestrakSatellites::new(HttpClient::new(std::time::Duration::from_secs(5)).unwrap());
+        source
+            .to_disk(&ElementCache {
+                fetched_at: Utc::now(),
+                elements: elements(),
+            })
+            .await;
+        assert!(source.load_stored().await.is_none());
     }
 
     #[test]
