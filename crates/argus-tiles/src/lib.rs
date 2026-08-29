@@ -13,6 +13,8 @@
 //! part PostGIS *is* better at, throwing away vertices too close together to
 //! see, stays in SQL where it saves the transfer as well as the encode.
 
+pub mod dem;
+
 use argus_core::entity::EntityKind;
 use argus_core::geo::TileCoord;
 use argus_core::layer::LayerStyle;

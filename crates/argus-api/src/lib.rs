@@ -62,6 +62,10 @@ impl Default for ApiConfig {
 pub struct ApiState {
     pub store: Store,
     pub tiler: Tiler,
+    /// The self-hosted elevation grid, when one is configured. `None` leaves
+    /// every terrain route answering "not here", which the client reads as
+    /// "use your global fallback".
+    pub dem: Option<Arc<argus_tiles::dem::Dem>>,
     pub config: Arc<ApiConfig>,
     pub pairing: Arc<PairingCodes>,
     pub started_at: chrono::DateTime<chrono::Utc>,
@@ -72,6 +76,7 @@ impl ApiState {
         Self {
             tiler: Tiler::new(store.clone()),
             store,
+            dem: None,
             config: Arc::new(config),
             pairing: Arc::new(PairingCodes::new()),
             started_at: chrono::Utc::now(),
@@ -112,6 +117,8 @@ pub fn router(state: ApiState) -> Router {
             "/v1/tiles/{layer}/{z}/{x}/{y}",
             get(routes::tiles::layer_tile),
         )
+        .route("/v1/terrain/meta", get(routes::terrain::meta))
+        .route("/v1/terrain/{z}/{x}/{y}", get(routes::terrain::tile))
         .route("/v1/stream", get(routes::stream::stream))
         .route("/v1/devices", get(routes::pairing::list))
         .route("/v1/devices/{device_id}", delete(routes::pairing::revoke))

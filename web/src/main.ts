@@ -14,6 +14,8 @@ import { loadGeoid, geoidReady, undulationM, resolveHeight } from "./geo/datum.t
 import { LayerRenderer } from "./layers/entities.ts";
 import { Buildings, BUILDINGS_ATTRIBUTION } from "./layers/buildings.ts";
 import { LabelArbiter } from "./layers/labels.ts";
+import { ArgusTerrainProvider, fetchTerrainMeta } from "./geo/terrain.ts";
+import { ARGUS_BASE, deviceToken } from "./config.ts";
 import type { ClientKeys, Entity, Layer } from "./net/types.ts";
 import { Hud } from "./ui/hud.ts";
 import { EntityCard } from "./ui/card.ts";
@@ -50,11 +52,39 @@ async function main(): Promise<void> {
     hud.note(`client keys unavailable (${error.code})`);
   }
 
-  const { viewer, photoreal, terrain } = createViewer(container, keys);
+  const { viewer, photoreal, terrain } = await createViewer(container, keys);
   const renderer = new LayerRenderer(viewer);
   const labels = new LabelArbiter(viewer);
   hud.setPhotoreal(photoreal);
   if (!terrain) hud.note("flat ellipsoid — no Cesium ion token configured");
+
+  // Self-hosted terrain, where this server has any.
+  //
+  // Deliberately after the viewer exists rather than part of building it: the
+  // provider wraps whatever global terrain was configured and falls back to it
+  // outside the survey, so it needs something to wrap. The geoid has to be
+  // loaded first — these heights are orthometric, and drawing them before the
+  // undulation is known would sink the landscape by 46 m — so this waits for
+  // it rather than racing it.
+  void (async () => {
+    const base = ARGUS_BASE || window.location.origin;
+    const meta = await fetchTerrainMeta(base, deviceToken());
+    if (!meta?.available || !meta.bounds) return;
+    if (meta.datum === "orthometric") await loadGeoid();
+    viewer.terrainProvider = new ArgusTerrainProvider(
+      viewer.terrainProvider,
+      meta,
+      base,
+      deviceToken(),
+    ) as never;
+    if (meta.attribution) hud.addAttribution(meta.attribution);
+    const [w, s, e, n] = meta.bounds;
+    hud.note(
+      `terrain: ${meta.ground_metres ?? "?"} m self-hosted over ` +
+        `${w.toFixed(2)},${s.toFixed(2)}..${e.toFixed(2)},${n.toFixed(2)}`,
+    );
+    viewer.scene.requestRender();
+  })();
 
   // Buildings are scene furniture, not a feed: they are loaded once and never
   // updated, so a slow or missing tileset must not hold up the contacts.

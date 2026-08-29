@@ -160,6 +160,36 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
 
+    // Terrain is optional and must stay optional: a grid that fails to load is
+    // a client falling back to global terrain, never a daemon that will not
+    // start. Loading it here rather than per request keeps the whole grid
+    // resident, which is the point — a sample has to be an array index.
+    let api_state = match config.client.terrain_grid.as_ref() {
+        None => api_state,
+        Some(path) => match argus_tiles::dem::Dem::load(path) {
+            Ok(dem) => {
+                let m = dem.meta();
+                tracing::info!(
+                    grid = %path.display(),
+                    width = m.width,
+                    height = m.height,
+                    ground_m = m.ground_metres,
+                    datum = %m.datum,
+                    bounds = format!("{},{},{},{}", m.west, m.south, m.east, m.north),
+                    "terrain grid loaded"
+                );
+                argus_api::ApiState {
+                    dem: Some(std::sync::Arc::new(dem)),
+                    ..api_state
+                }
+            }
+            Err(err) => {
+                tracing::warn!("terrain grid {} not loaded: {err}", path.display());
+                api_state
+            }
+        },
+    };
+
     // A daemon nobody has paired with is a daemon nobody can use, and the one
     // moment an operator is definitely looking at the console is the moment
     // they started it. Offering the code here rather than making them find a

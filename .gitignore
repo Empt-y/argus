@@ -8,3 +8,6 @@
 /droid/local.properties
 argus.toml
 *.log
+
+# Prepared terrain grids — regenerate with tools/terrain/prepare_terrain.py
+data/

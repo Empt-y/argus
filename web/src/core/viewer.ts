@@ -21,13 +21,14 @@
 
 import {
   Cartesian3,
+  CesiumTerrainProvider,
   Color,
   Ion,
   Math as CesiumMath,
   OpenStreetMapImageryProvider,
   Rectangle,
   ScreenSpaceEventType,
-  Terrain,
+  type TerrainProvider,
   Viewer,
 } from "cesium";
 import type { ClientKeys } from "../net/types.ts";
@@ -40,10 +41,10 @@ export interface ViewerBundle {
   terrain: boolean;
 }
 
-export function createViewer(
+export async function createViewer(
   container: HTMLElement,
   keys: ClientKeys | null,
-): ViewerBundle {
+): Promise<ViewerBundle> {
   // Set before constructing the Viewer: Cesium reads it during widget setup,
   // and an empty default token makes its own asset requests fail noisily even
   // when nothing is asking for ion data.
@@ -55,12 +56,27 @@ export function createViewer(
   // This is the seam `resolveHeight` was written against: with terrain the
   // `above_ground` datum and ground contacts become resolvable, and without it
   // they are honestly approximate.
-  const terrain = keys?.cesium_ion_token
-    ? Terrain.fromWorldTerrain({ requestVertexNormals: true })
-    : undefined;
+  //
+  // Awaited rather than handed to the Viewer as a `Terrain` promise, which is
+  // the tidier-looking option and was a bug: the provider then appears some
+  // frames later, and anything that wraps `viewer.terrainProvider` — as the
+  // self-hosted provider does — wraps `undefined` and fails on first use.
+  // Whoever reads this back gets a provider that already exists.
+  let terrain: TerrainProvider | undefined;
+  if (keys?.cesium_ion_token) {
+    try {
+      // Asset 1 is Cesium World Terrain.
+      terrain = await CesiumTerrainProvider.fromIonAssetId(1, {
+        requestVertexNormals: true,
+      });
+    } catch {
+      // A bad or expired token is a flat globe with everything else working,
+      // never a client that fails to start.
+      terrain = undefined;
+    }
+  }
 
   const viewer = new Viewer(container, {
-    ...(terrain ? { terrain } : {}),
     // Keyless. OSM's tile policy asks for a real user agent and modest volume,
     // which a single self-hosted client satisfies comfortably.
     baseLayer: false,
@@ -80,6 +96,8 @@ export function createViewer(
     requestRenderMode: true,
     maximumRenderTimeChange: Infinity,
   });
+
+  if (terrain) viewer.terrainProvider = terrain;
 
   viewer.imageryLayers.addImageryProvider(
     new OpenStreetMapImageryProvider({ url: "https://tile.openstreetmap.org/" }),

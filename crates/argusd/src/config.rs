@@ -189,6 +189,12 @@ pub struct ClientConfig {
     /// whole reason this setting exists.
     #[serde(default)]
     pub buildings_tileset_url: Option<String>,
+    /// Path to a prepared elevation grid, without the extension: the daemon
+    /// reads `<path>.json` and `<path>.bin`. Built by
+    /// `tools/terrain/prepare_terrain.py`. Absent means clients fall back to
+    /// whatever global terrain they can reach.
+    #[serde(default)]
+    pub terrain_grid: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
