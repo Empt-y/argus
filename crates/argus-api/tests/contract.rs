@@ -21,6 +21,18 @@ use chrono::{Duration, Utc};
 use serde_json::Value;
 use tower::ServiceExt;
 
+/// Serialises the tests in this binary.
+///
+/// Every test here truncates the shared database and seeds its own fixture, so
+/// two running at once corrupt each other's expectations. That was previously
+/// handled by documenting `--test-threads=1`, which works right up until
+/// somebody runs a bare `cargo test` and gets six confusing failures that have
+/// nothing to do with their change. A lock makes the requirement structural
+/// instead of a thing to remember.
+static DATABASE: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+
 const LOOPBACK: std::net::SocketAddr = std::net::SocketAddr::new(
     std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
     50_000,
@@ -30,7 +42,10 @@ const REMOTE: std::net::SocketAddr = std::net::SocketAddr::new(
     50_000,
 );
 
-async fn state(auth: AuthMode) -> Option<ApiState> {
+async fn state(auth: AuthMode) -> Option<(ApiState, tokio::sync::MutexGuard<'static, ()>)> {
+    // Held for the life of the test: the truncate below is destructive to any
+    // other test using the same database.
+    let guard = DATABASE.lock().await;
     let url = std::env::var("ARGUS_TEST_DATABASE_URL").ok()?;
     let store = Store::connect(&url, 4).await.expect("connect to test database");
     store.migrate().await.expect("migrations apply");
@@ -50,13 +65,16 @@ async fn state(auth: AuthMode) -> Option<ApiState> {
 
     seed_aircraft(&store).await;
 
-    Some(ApiState::new(
-        store,
-        ApiConfig {
-            auth,
-            public_url: "http://argus.test:8787".into(),
-            ..ApiConfig::default()
-        },
+    Some((
+        ApiState::new(
+            store,
+            ApiConfig {
+                auth,
+                public_url: "http://argus.test:8787".into(),
+                ..ApiConfig::default()
+            },
+        ),
+        guard,
     ))
 }
 
@@ -134,7 +152,7 @@ fn json(body: &[u8]) -> Value {
 
 #[tokio::test]
 async fn health_answers_without_a_token_from_anywhere() {
-    let Some(state) = state(AuthMode::Required).await else {
+    let Some((state, _guard)) = state(AuthMode::Required).await else {
         return;
     };
     // Even under Required: telling a wrong address apart from a down server has
@@ -147,7 +165,7 @@ async fn health_answers_without_a_token_from_anywhere() {
 
 #[tokio::test]
 async fn a_remote_caller_without_a_token_is_refused() {
-    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
         return;
     };
     let (status, body) = get(&state, "/v1/entities", REMOTE).await;
@@ -161,7 +179,7 @@ async fn a_remote_caller_without_a_token_is_refused() {
 
 #[tokio::test]
 async fn loopback_is_not_exempt_when_the_policy_says_required() {
-    let Some(state) = state(AuthMode::Required).await else {
+    let Some((state, _guard)) = state(AuthMode::Required).await else {
         return;
     };
     let (status, _) = get(&state, "/v1/entities", LOOPBACK).await;
@@ -170,7 +188,7 @@ async fn loopback_is_not_exempt_when_the_policy_says_required() {
 
 #[tokio::test]
 async fn a_paired_device_token_is_accepted_and_a_revoked_one_is_not() {
-    let Some(state) = state(AuthMode::Required).await else {
+    let Some((state, _guard)) = state(AuthMode::Required).await else {
         return;
     };
     let code = state.pairing.issue();
@@ -228,7 +246,7 @@ async fn a_paired_device_token_is_accepted_and_a_revoked_one_is_not() {
 
 #[tokio::test]
 async fn a_token_in_the_query_string_works_for_clients_that_cannot_set_headers() {
-    let Some(state) = state(AuthMode::Required).await else {
+    let Some((state, _guard)) = state(AuthMode::Required).await else {
         return;
     };
     let issued = state
@@ -250,7 +268,7 @@ async fn a_token_in_the_query_string_works_for_clients_that_cannot_set_headers()
 
 #[tokio::test]
 async fn a_read_only_device_cannot_mint_a_pairing_code() {
-    let Some(state) = state(AuthMode::Required).await else {
+    let Some((state, _guard)) = state(AuthMode::Required).await else {
         return;
     };
     let issued = state
@@ -270,7 +288,7 @@ async fn a_read_only_device_cannot_mint_a_pairing_code() {
 
 #[tokio::test]
 async fn entities_answers_a_viewport_and_reports_whether_it_truncated() {
-    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
         return;
     };
     let (status, body) = get(
@@ -299,7 +317,7 @@ async fn entities_answers_a_viewport_and_reports_whether_it_truncated() {
 
 #[tokio::test]
 async fn a_kind_filter_and_a_layer_filter_both_apply() {
-    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
         return;
     };
     let (_, body) = get(&state, "/v1/entities?kinds=aircraft", LOOPBACK).await;
@@ -312,7 +330,7 @@ async fn a_kind_filter_and_a_layer_filter_both_apply() {
 
 #[tokio::test]
 async fn a_malformed_viewport_is_a_client_error_naming_the_problem() {
-    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
         return;
     };
     for (uri, needle) in [
@@ -330,7 +348,7 @@ async fn a_malformed_viewport_is_a_client_error_naming_the_problem() {
 
 #[tokio::test]
 async fn an_entity_detail_and_its_track_resolve_by_natural_key() {
-    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
         return;
     };
     let (status, body) = get(&state, "/v1/entities/aircraft/a1b2c3", LOOPBACK).await;
@@ -356,7 +374,7 @@ async fn an_entity_detail_and_its_track_resolve_by_natural_key() {
 
 #[tokio::test]
 async fn a_backwards_track_window_is_refused() {
-    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
         return;
     };
     let (status, _) = get(
@@ -371,7 +389,7 @@ async fn a_backwards_track_window_is_refused() {
 
 #[tokio::test]
 async fn sources_and_layers_report_health_honestly() {
-    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
         return;
     };
     let (status, body) = get(&state, "/v1/sources", LOOPBACK).await;
@@ -392,7 +410,7 @@ async fn sources_and_layers_report_health_honestly() {
 
 #[tokio::test]
 async fn a_tile_over_the_seeded_aircraft_contains_them() {
-    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
         return;
     };
     let coord = tile_for(-97.74, 30.27, 8);
@@ -414,7 +432,7 @@ async fn a_tile_over_the_seeded_aircraft_contains_them() {
 
 #[tokio::test]
 async fn an_empty_tile_is_a_204_rather_than_a_404() {
-    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
         return;
     };
     // Mid-Pacific at z=8: nothing seeded there. A 404 would make MapLibre
@@ -431,7 +449,7 @@ async fn an_empty_tile_is_a_204_rather_than_a_404() {
 
 #[tokio::test]
 async fn an_out_of_range_tile_is_a_client_error() {
-    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
         return;
     };
     let (status, _) = get(&state, "/v1/tiles/flights/1/9/0", LOOPBACK).await;
@@ -442,7 +460,7 @@ async fn an_out_of_range_tile_is_a_client_error() {
 
 #[tokio::test]
 async fn the_style_document_points_at_the_public_url() {
-    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
         return;
     };
     let (status, body) = get(&state, "/v1/style.json", LOOPBACK).await;
@@ -473,7 +491,7 @@ async fn the_style_document_points_at_the_public_url() {
 /// rather than waiting a minute for the policy to fire.
 #[tokio::test]
 async fn the_dvr_serves_a_past_instant_through_both_entities_and_tiles() {
-    let Some(state) = state(AuthMode::LoopbackExempt).await else {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
         return;
     };
 

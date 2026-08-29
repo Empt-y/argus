@@ -19,7 +19,22 @@ use argus_core::source::SourceId;
 use argus_store::{EntityFilter, Store};
 use chrono::{Duration, Utc};
 
-async fn store() -> Option<Store> {
+/// Serialises the tests in this binary.
+///
+/// Every test here truncates the shared database and seeds its own fixture, so
+/// two running at once corrupt each other's expectations. That was previously
+/// handled by documenting `--test-threads=1`, which works right up until
+/// somebody runs a bare `cargo test` and gets six confusing failures that have
+/// nothing to do with their change. A lock makes the requirement structural
+/// instead of a thing to remember.
+static DATABASE: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+
+async fn store() -> Option<(Store, tokio::sync::MutexGuard<'static, ()>)> {
+    // Held for the life of the test: the truncate below is destructive to any
+    // other test using the same database.
+    let guard = DATABASE.lock().await;
     let url = std::env::var("ARGUS_TEST_DATABASE_URL").ok()?;
     let store = Store::connect(&url, 4).await.expect("connect to test database");
     store.migrate().await.expect("migrations apply");
@@ -36,7 +51,7 @@ async fn store() -> Option<Store> {
     .execute(store.pool())
     .await
     .expect("seed source");
-    Some(store)
+    Some((store, guard))
 }
 
 fn observation(key: &str, lon: f64, lat: f64, secs_ago: i64) -> Observation {
@@ -65,8 +80,11 @@ fn observation(key: &str, lon: f64, lat: f64, secs_ago: i64) -> Observation {
 
 macro_rules! require_db {
     () => {
+        // Expands to the (store, guard) pair rather than just the store: a
+        // guard bound inside the match arm would be dropped as the arm produced
+        // its value, releasing the lock before the test body even starts.
         match store().await {
-            Some(s) => s,
+            Some(pair) => pair,
             None => {
                 eprintln!("skipping: ARGUS_TEST_DATABASE_URL not set");
                 return;
@@ -77,7 +95,7 @@ macro_rules! require_db {
 
 #[tokio::test]
 async fn observations_round_trip_through_the_hypertable() {
-    let store = require_db!();
+    let (store, _db) = require_db!();
     let obs = vec![
         observation("abc123", -97.74, 30.27, 30),
         observation("def456", -97.70, 30.30, 20),
@@ -109,7 +127,7 @@ async fn a_late_arriving_stale_fix_cannot_overwrite_a_newer_one() {
     // The bug this prevents: two feeds describe the same aircraft at different
     // lags, the slower one lands second, and the contact visibly jumps
     // backwards to where it was a minute ago.
-    let store = require_db!();
+    let (store, _db) = require_db!();
     store
         .write_observations(&[observation("jump01", -97.70, 30.30, 10)])
         .await
@@ -134,7 +152,7 @@ async fn a_late_arriving_stale_fix_cannot_overwrite_a_newer_one() {
 
 #[tokio::test]
 async fn out_of_order_samples_within_one_batch_still_settle_on_the_newest() {
-    let store = require_db!();
+    let (store, _db) = require_db!();
     store
         .write_observations(&[
             observation("batch1", -97.90, 30.10, 600),
@@ -171,7 +189,7 @@ async fn out_of_order_samples_within_one_batch_still_settle_on_the_newest() {
 
 #[tokio::test]
 async fn implausible_positions_are_rejected_before_they_reach_the_store() {
-    let store = require_db!();
+    let (store, _db) = require_db!();
     let mut null_island = observation("null01", 0.0, 0.0, 5);
     null_island.attrs = serde_json::Value::Null;
     let written = store
@@ -185,7 +203,7 @@ async fn implausible_positions_are_rejected_before_they_reach_the_store() {
 
 #[tokio::test]
 async fn antimeridian_queries_return_both_sides() {
-    let store = require_db!();
+    let (store, _db) = require_db!();
     store
         .write_observations(&[
             observation("fiji01", 179.5, -17.0, 10),
@@ -207,7 +225,7 @@ async fn antimeridian_queries_return_both_sides() {
 
 #[tokio::test]
 async fn the_dvr_answers_where_things_were_at_a_past_instant() {
-    let store = require_db!();
+    let (store, _db) = require_db!();
     let then = Utc::now() - Duration::minutes(30);
 
     // Two positions for one aircraft, half an hour apart.
@@ -252,7 +270,7 @@ async fn the_dvr_answers_where_things_were_at_a_past_instant() {
 async fn a_stale_sample_is_not_dragged_forward_forever() {
     // An aircraft that landed hours ago must not keep appearing in every later
     // snapshot; the historical query floors how far back it will reach.
-    let store = require_db!();
+    let (store, _db) = require_db!();
     let mut landed = observation("gone01", -97.75, 30.25, 0);
     landed.observed_at = Utc::now() - Duration::hours(3);
     store.write_observations(&[landed]).await.expect("write");
@@ -281,7 +299,7 @@ async fn re_polling_an_immutable_event_does_not_rewrite_it() {
     // Earthquakes keep the same observed_at forever, but the feed must still be
     // re-polled because USGS revises magnitudes for hours. Without the dedupe
     // index one 5-minute feed wrote ~74,000 identical rows a day.
-    let store = require_db!();
+    let (store, _db) = require_db!();
     let quake = observation("quake1", -122.0, 38.0, 900);
 
     let first = store.write_observations(std::slice::from_ref(&quake)).await.expect("first");
@@ -308,7 +326,7 @@ async fn re_polling_an_immutable_event_does_not_rewrite_it() {
 async fn a_moving_entity_is_never_deduped_away() {
     // The dedupe key includes observed_at, which advances with every
     // transponder return — so an aircraft's track must survive intact.
-    let store = require_db!();
+    let (store, _db) = require_db!();
     let obs: Vec<_> = (0..5)
         .map(|i| observation("mover", -97.0 - (i as f64) * 0.01, 30.0, 300 - i * 60))
         .collect();
@@ -323,7 +341,7 @@ async fn polygons_survive_the_round_trip_as_geometry() {
     // nowhere to put it, so any observation whose shape was its whole meaning —
     // a weather alert area, a fire perimeter, a forecast cone — was accepted by
     // is_meaningful() and then written with the geometry silently discarded.
-    let store = require_db!();
+    let (store, _db) = require_db!();
 
     let square = geo_types::Polygon::new(
         geo_types::LineString(vec![
@@ -369,7 +387,7 @@ async fn a_shape_is_found_by_a_box_that_misses_its_label_anchor() {
     // A viewport clipping the corner of a large alert area must still find it.
     // Matching only on the point would hide any polygon whose anchor happens to
     // sit outside the current view — which for a big warning is most views.
-    let store = require_db!();
+    let (store, _db) = require_db!();
     let strip = geo_types::Polygon::new(
         geo_types::LineString(vec![
             geo_types::Coord { x: -100.0, y: 30.0 },
