@@ -207,6 +207,21 @@ export class LayerRenderer {
       entity.lon,
     );
 
+    // How the height should be interpreted when the scene draws it.
+    //
+    // `above_ground` is the one datum whose number is an offset rather than a
+    // place: an aircraft reporting 0 m AGL is on the apron, not at ellipsoidal
+    // zero, which near London is about seventy metres underground. Cesium
+    // resolves that offset against real terrain per frame and re-resolves it as
+    // tiles stream in, which is strictly better than sampling a height once
+    // here and freezing whatever was loaded at the time.
+    const heightReference =
+      height.basis === "unknown"
+        ? HeightReference.CLAMP_TO_GROUND
+        : height.basis === "above_ground"
+          ? HeightReference.RELATIVE_TO_GROUND
+          : HeightReference.NONE;
+
     const existing = source.entities.getById(id);
     const target = existing ?? new CesiumEntity({ id });
 
@@ -250,6 +265,7 @@ export class LayerRenderer {
         // a plain screen-space angle, which is exactly what `screenRotation`
         // computes.
         alignedAxis: Cartesian3.ZERO as never,
+        heightReference: heightReference as never,
       } as never;
       this.#label(target, entity, color);
       if (!existing) source.entities.add(target);
@@ -270,13 +286,12 @@ export class LayerRenderer {
       outlineWidth: 1 as never,
       // A contact that reported no altitude at all belongs on the ground, not
       // at ellipsoidal zero — which is the geoid's depth below the surface
-      // inland, and a hundred metres of it. Anything that did report an
-      // altitude is placed absolutely, trustworthy or not: clamping an
-      // approximate height would pin it to the wrong place with total
-      // confidence, which is worse than showing it slightly off.
-      heightReference: (height.basis === "unknown"
-        ? HeightReference.CLAMP_TO_GROUND
-        : HeightReference.NONE) as never,
+      // inland, and a hundred metres of it. One reporting height above ground
+      // is placed against the terrain that height is measured from. Anything
+      // reporting an absolute altitude is placed absolutely, trustworthy or
+      // not: clamping an approximate height would pin it to the wrong place
+      // with total confidence, which is worse than showing it slightly off.
+      heightReference: heightReference as never,
       disableDepthTestDistance: 0 as never,
     } as never;
 
