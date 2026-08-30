@@ -158,3 +158,47 @@ wrong with it. That is a different thing from `live` with zero results.
 the chain in preference order. Providers sharing a wire format should share a
 decoder — `sources/readsb.rs` serves adsb.lol, adsb.fi and, in Phase 10, a local
 dump1090 receiver, because a dongle on the roof is just another provider.
+
+## Android toolchain (Phase 5)
+
+Installed user-local, no system packages beyond the JDK Gentoo already had:
+
+```sh
+# Java: openjdk-bin-21 was already present. It is NOT the system VM (25 is), so
+# point at it explicitly rather than switching the system default — nothing else
+# on this machine wants 21.
+export JAVA_HOME=/opt/openjdk-bin-21
+export ANDROID_HOME="$HOME/Android/Sdk"
+
+# Command-line tools: take the archive named by Google's own manifest rather
+# than a URL from a blog post, and check the digest it publishes beside it.
+#   https://dl.google.com/android/repository/repository2-3.xml
+#   -> cmdline-tools;latest, revision 23.0
+curl -LO https://dl.google.com/android/repository/commandlinetools-linux-16111833_latest.zip
+sha1sum commandlinetools-linux-16111833_latest.zip   # e025545c62a8e64c7559119566a569fb1dec5f60
+
+# The zip unpacks to a top-level cmdline-tools/, which has to land at
+# cmdline-tools/latest/ or sdkmanager cannot find its own libraries.
+unzip -q commandlinetools-linux-*.zip -d /tmp/cmdline
+mkdir -p "$ANDROID_HOME/cmdline-tools"
+mv /tmp/cmdline/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
+
+"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+    --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+```
+
+About 485 MB installed. `--licenses` is gone in this revision and is no longer
+needed; the installer prints a warning if you pass it.
+
+Gradle is not installed system-wide on purpose — an Android project brings its
+own via the wrapper, and `local.properties` carries `sdk.dir` so nothing has to
+live in a shell profile.
+
+**Verify it before trusting it.** That the files exist proves nothing; what
+matters is whether the JDK and the build tools agree:
+
+```sh
+echo 'public class Hello { public static void main(String[] a) {} }' > Hello.java
+"$JAVA_HOME/bin/javac" -source 17 -target 17 Hello.java
+"$ANDROID_HOME/build-tools/35.0.0/d8" --release --output . Hello.class  # -> classes.dex
+```
