@@ -14,6 +14,15 @@ object Server {
     /** Emulator alias for the machine running the emulator. */
     const val EMULATOR_HOST = "http://10.0.2.2:8787"
 
+    /**
+     * Over USB, `adb reverse tcp:8787 tcp:8787` makes the handset's own
+     * loopback come out on the development machine's. Worth preferring to a LAN
+     * address during development for two reasons: nothing has to be bound to
+     * the network, and the daemon sees the request arrive on 127.0.0.1, so its
+     * `loopback_exempt` policy applies and no pairing is needed yet.
+     */
+    const val ADB_REVERSE_HOST = "http://127.0.0.1:8787"
+
     var baseUrl: String = EMULATOR_HOST
 
     val styleUrl: String get() = "$baseUrl/v1/style.json"

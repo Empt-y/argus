@@ -36,6 +36,13 @@ import org.maplibre.android.maps.MapView
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A server address supplied by the launcher wins, so a device can be
+        // pointed at a daemon without a rebuild:
+        //   adb shell am start -n org.argus.droid/.MainActivity -e server http://…
+        intent?.getStringExtra("server")?.takeIf { it.isNotBlank() }?.let {
+            Server.baseUrl = it.trimEnd('/')
+        }
+
         // Must happen before any MapView is constructed.
         MapLibre.getInstance(this)
         setContent {
