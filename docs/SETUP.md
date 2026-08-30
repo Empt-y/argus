@@ -202,3 +202,40 @@ echo 'public class Hello { public static void main(String[] a) {} }' > Hello.jav
 "$JAVA_HOME/bin/javac" -source 17 -target 17 Hello.java
 "$ANDROID_HOME/build-tools/35.0.0/d8" --release --output . Hello.class  # -> classes.dex
 ```
+
+### Emulator
+
+```sh
+sdkmanager --install "emulator" "system-images;android-35;default;x86_64"
+avdmanager create avd -n argus -k "system-images;android-35;default;x86_64" -d pixel_6
+```
+
+Plain AOSP rather than a Google Play image: MapLibre needs no Google services,
+and the smaller image boots faster.
+
+**KVM.** The user must be in the `kvm` group or the emulator silently falls back
+to software rendering and is unusable. `usermod -aG kvm <user>` takes effect on
+next login, so a running session needs `sg kvm -c '<command>'`:
+
+```sh
+sg kvm -c "$ANDROID_HOME/emulator/emulator -accel-check"   # -> "KVM ... is installed and usable"
+sg kvm -c "$ANDROID_HOME/emulator/emulator -avd argus -no-window -no-audio -gpu swiftshader_indirect"
+```
+
+### Version notes, all read from registries rather than remembered
+
+Gradle 9.7.1 · AGP 9.3.2 · Kotlin 2.4.10 · Compose BOM 2026.08.00 ·
+MapLibre Native 13.6.0. Two of these bite:
+
+* **AGP 9 has Kotlin support built in.** Applying `org.jetbrains.kotlin.android`
+  as well is not merely redundant, it fails the build outright: "The
+  'org.jetbrains.kotlin.android' plugin is no longer required for Kotlin support
+  since AGP 9.0". The Compose and serialization plugins are still applied.
+* **compileSdk must be 37**, not 35 or 36. Current Compose artifacts declare a
+  minimum compile API of 37 in their AAR metadata, and the check is fatal rather
+  than a warning. The package is `platforms;android-37.0` — `platforms;android-37`
+  does not exist and reports "not found", which reads like the platform is
+  unavailable when it is only named differently.
+
+`targetSdk` stays at 35 to match the emulator image; `compileSdk` may exceed the
+device API and does.
