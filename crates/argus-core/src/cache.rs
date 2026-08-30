@@ -63,6 +63,27 @@ impl GeometryCache for MemoryGeometryCache {
     }
 }
 
+/// What Argus already knows it tracks.
+///
+/// A failover provider has a bootstrapping problem the primary does not: the
+/// primary defines the catalogue (CelesTrak does it by group), and a fallback
+/// that cannot name the same objects can only ask for everything or nothing.
+/// The stored element set answers that once the primary has run — but the case
+/// that matters most is a cold start *during* an outage, where it has not.
+///
+/// Argus has been recording these objects for as long as it has been running,
+/// so the answer is already on disk in the observation history. This is the
+/// interface for asking it. It is the project's own premise turned around: the
+/// history is not just something to replay, it is what lets the system carry on
+/// when a live feed goes away.
+#[async_trait::async_trait]
+pub trait TrackedCatalogue: Send + Sync {
+    /// NORAD numbers of every satellite Argus holds, sorted. Empty when there
+    /// is no history yet, which is a real answer — a genuinely fresh install
+    /// has nothing to fall back to and must wait for the primary.
+    async fn tracked_norad_ids(&self) -> Vec<u64>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -89,6 +89,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- ingest ---------------------------------------------------------
     let http = argus_ingest::HttpClient::new(std::time::Duration::from_secs(30))?;
+    // A second client that keeps cookies, for the one provider that
+    // authenticates with a session instead of a header. Separate on purpose:
+    // a shared cookie jar lets one host's state follow requests to another.
+    let session_http = argus_ingest::HttpClient::with_session(std::time::Duration::from_secs(30))?;
     let api_store = store.clone();
     let runtime = argus_ingest::Runtime::new(
         store,
@@ -109,7 +113,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut runtime = runtime.with_aois(aois);
 
-    for source in build_sources(&config, &http, std::sync::Arc::new(api_store.clone())) {
+    for source in build_sources(
+        &config,
+        &http,
+        &session_http,
+        std::sync::Arc::new(api_store.clone()),
+        std::sync::Arc::new(api_store.clone()),
+    ) {
         runtime.register(source);
     }
 
@@ -234,7 +244,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn build_sources(
     config: &Config,
     http: &argus_ingest::HttpClient,
+    session_http: &argus_ingest::HttpClient,
     zone_cache: std::sync::Arc<dyn argus_core::GeometryCache>,
+    catalogue: std::sync::Arc<dyn argus_core::TrackedCatalogue>,
 ) -> Vec<std::sync::Arc<dyn argus_core::Source>> {
     let enabled = |id: &str| {
         config
@@ -257,10 +269,53 @@ fn build_sources(
         )));
     }
     if enabled("celestrak") {
-        sources.push(std::sync::Arc::new(
-            argus_ingest::sources::CelestrakSatellites::new(http.clone())
-                .persisting_in(&config.state_dir),
-        ));
+        // Satellites are a chain too, and the shape is unusual enough to state:
+        // the fallback follows the primary's curation rather than choosing its
+        // own. CelesTrak decides *which* objects Argus tracks, by group;
+        // Space-Track has no equivalent grouping and would otherwise hand back
+        // the entire on-orbit catalogue. So both share one element store — the
+        // primary writes the catalogue, the fallback reads which numbers to ask
+        // for. Which also means the fallback cannot bootstrap: until CelesTrak
+        // has succeeded once there is nothing to ask for, and that is the
+        // honest shape of a failover rather than a limitation to paper over.
+        let store = argus_ingest::sources::elements::ElementStore::in_dir(&config.state_dir);
+        let credentials = config
+            .sources
+            .get("spacetrack")
+            .map(|s| s.credentials.clone())
+            .unwrap_or_default();
+
+        let mut providers: Vec<std::sync::Arc<dyn argus_core::Source>> =
+            vec![std::sync::Arc::new(
+                argus_ingest::sources::CelestrakSatellites::new(http.clone())
+                    .persisting_in(&config.state_dir),
+            )];
+        if enabled("spacetrack") {
+            providers.push(std::sync::Arc::new(
+                // Its own client: Space-Track authenticates with a session
+                // cookie, and a cookie jar shared with thirty other providers
+                // is a way for one host's state to follow requests to another.
+                argus_ingest::sources::spacetrack::SpaceTrackSatellites::new(
+                    session_http.clone(),
+                    store,
+                )
+                .with_login(
+                    credentials
+                        .get(argus_ingest::sources::spacetrack::IDENTITY_KEY)
+                        .cloned(),
+                    credentials
+                        .get(argus_ingest::sources::spacetrack::PASSWORD_KEY)
+                        .cloned(),
+                )
+                // So a cold start during an outage can still name the objects
+                // to ask for, from what this deployment has already recorded.
+                .with_catalogue(catalogue.clone()),
+            ));
+        }
+        sources.push(std::sync::Arc::new(argus_ingest::ProviderChain::new(
+            "satellites",
+            providers,
+        )));
     }
 
     if enabled("nws-alerts") {

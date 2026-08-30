@@ -13,7 +13,7 @@ pub mod orbital;
 pub mod seismic;
 pub mod source;
 
-pub use cache::{GeometryCache, MemoryGeometryCache};
+pub use cache::{GeometryCache, MemoryGeometryCache, TrackedCatalogue};
 pub use entity::{
     AltitudeDatum, EntityId, EntityKind, Kinematics, Observation, Position, Quality,
 };

@@ -5,6 +5,8 @@
 //! format into observations. Keeping `decode` separate from `poll` is what lets
 //! each driver be tested against a captured fixture with no network.
 
+pub mod elements;
+pub mod spacetrack;
 pub mod celestrak;
 pub mod emsc;
 pub mod nws;

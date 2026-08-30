@@ -72,6 +72,18 @@ pub enum AuthRequirement {
         client_id_key: String,
         client_secret_key: String,
     },
+    /// Needs an account username and password, exchanged for a session rather
+    /// than sent per request.
+    ///
+    /// Distinct from [`AuthRequirement::OAuth`] on purpose: these are the
+    /// operator's own login, not a scoped machine credential that can be
+    /// revoked on its own. Space-Track issues nothing else — there is no API
+    /// key to create — and the difference is worth keeping visible, because a
+    /// leaked one of these costs the whole account rather than one integration.
+    Login {
+        identity_key: String,
+        password_key: String,
+    },
     /// Needs local hardware (an SDR) or a local helper process.
     Hardware { description: String },
 }

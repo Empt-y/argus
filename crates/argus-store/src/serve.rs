@@ -282,3 +282,39 @@ impl argus_core::GeometryCache for Store {
         }
     }
 }
+
+/// The catalogue Argus already tracks, read out of its own history.
+///
+/// Used by a failover satellites provider that has no way of its own to decide
+/// which objects matter — see [`argus_core::TrackedCatalogue`]. Reading it from
+/// the entities table rather than a config list means the fallback follows
+/// whatever the primary has actually been collecting, including objects added
+/// since this code was written.
+#[async_trait::async_trait]
+impl argus_core::TrackedCatalogue for Store {
+    async fn tracked_norad_ids(&self) -> Vec<u64> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT attrs->>'norad_id'
+               FROM entities
+              WHERE entity_kind = 'satellite'
+                AND attrs ? 'norad_id'
+              ORDER BY 1",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_else(|err| {
+            // An unreadable catalogue is a fallback that cannot start, not a
+            // daemon that should stop. The chain reports it either way.
+            tracing::warn!("tracked catalogue lookup failed: {err}");
+            Vec::new()
+        });
+
+        let mut ids: Vec<u64> = rows
+            .into_iter()
+            .filter_map(|(s,)| s.parse::<u64>().ok())
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
+}

@@ -403,6 +403,12 @@ impl CredentialResolver {
                 self.get(id, client_id_key).is_some()
                     && self.get(id, client_secret_key).is_some()
             }
+            A::Login {
+                identity_key,
+                password_key,
+            } => {
+                self.get(id, identity_key).is_some() && self.get(id, password_key).is_some()
+            }
             // Hardware presence is probed by the driver at startup, not
             // configured. Until Phase 10 wires that up, treat it as absent.
             A::Hardware { .. } => false,

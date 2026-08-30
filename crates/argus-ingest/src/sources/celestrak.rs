@@ -22,6 +22,7 @@
 //! unreachable and the layer going empty on restart rather than coasting.
 
 use crate::http::HttpClient;
+use crate::sources::elements::{ElementCache, ElementStore};
 use argus_core::entity::{AltitudeDatum, EntityId, EntityKind, Observation, Position, Quality};
 use argus_core::orbital;
 use argus_core::source::{
@@ -67,15 +68,9 @@ pub struct CelestrakSatellites {
     http: HttpClient,
     groups: Vec<String>,
     cache: RwLock<Option<ElementCache>>,
-    /// Where the last good element set is kept between runs. `None` disables
-    /// persistence, which is what the tests use.
-    store_path: Option<std::path::PathBuf>,
-}
-
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct ElementCache {
-    fetched_at: DateTime<Utc>,
-    elements: Vec<sgp4::Elements>,
+    /// Shared with every other satellites provider: this driver decides the
+    /// catalogue, and a fallback can only ask for it by number.
+    store: ElementStore,
 }
 
 impl CelestrakSatellites {
@@ -112,56 +107,17 @@ impl CelestrakSatellites {
             },
             http,
             cache: RwLock::new(None),
-            store_path: None,
+            store: ElementStore::disabled(),
         }
     }
 
     /// Keep the element set in `dir`, so an upstream outage that spans a
-    /// restart costs nothing.
+    /// restart costs nothing — and so a fallback provider can see which
+    /// objects this catalogue contains.
     #[must_use]
     pub fn persisting_in(mut self, dir: &std::path::Path) -> Self {
-        self.store_path = Some(dir.join("celestrak-elements.json"));
+        self.store = ElementStore::in_dir(dir);
         self
-    }
-
-    /// The last element set written to disk, if it is still worth propagating.
-    async fn load_stored(&self) -> Option<ElementCache> {
-        let path = self.store_path.as_ref()?;
-        let text = tokio::fs::read_to_string(path).await.ok()?;
-        let cache: ElementCache = serde_json::from_str(&text).ok()?;
-        if cache.elements.is_empty() {
-            return None;
-        }
-        // Age is judged per element when propagating, but a wholesale refusal
-        // here keeps a truly ancient file from looking like a live source.
-        if Utc::now() - cache.fetched_at > MAX_ELEMENT_AGE {
-            tracing::warn!(
-                "celestrak: stored elements are older than {} days, ignoring",
-                MAX_ELEMENT_AGE.num_days()
-            );
-            return None;
-        }
-        Some(cache)
-    }
-
-    async fn to_disk(&self, cache: &ElementCache) {
-        let Some(path) = self.store_path.as_ref() else {
-            return;
-        };
-        if let Some(parent) = path.parent() {
-            let _ = tokio::fs::create_dir_all(parent).await;
-        }
-        // Write beside and rename, so a daemon killed mid-write leaves the
-        // previous good catalogue rather than a truncated one.
-        let tmp = path.with_extension("json.tmp");
-        match serde_json::to_vec(cache) {
-            Ok(bytes) => {
-                if tokio::fs::write(&tmp, &bytes).await.is_ok() {
-                    let _ = tokio::fs::rename(&tmp, path).await;
-                }
-            }
-            Err(err) => tracing::warn!("celestrak: could not serialise elements: {err}"),
-        }
     }
 
     /// Return cached elements, refetching only when the cache has aged out.
@@ -176,7 +132,7 @@ impl CelestrakSatellites {
         // is worth adopting before reaching for the network, and is what makes
         // a restart during an outage a non-event.
         if self.cache.read().await.is_none()
-            && let Some(stored) = self.load_stored().await
+            && let Some(stored) = self.store.load(MAX_ELEMENT_AGE).await
         {
             let age = Utc::now() - stored.fetched_at;
             tracing::info!(
@@ -245,7 +201,7 @@ impl CelestrakSatellites {
             fetched_at: Utc::now(),
             elements: fetched.clone(),
         };
-        self.to_disk(&fresh).await;
+        self.store.save(&fresh).await;
         *self.cache.write().await = Some(fresh);
         Ok(fetched)
     }
@@ -397,7 +353,8 @@ mod tests {
 
         let first = CelestrakSatellites::new(http.clone()).persisting_in(&dir);
         first
-            .to_disk(&ElementCache {
+            .store
+            .save(&ElementCache {
                 fetched_at: Utc::now() - Duration::hours(2),
                 elements: elements(),
             })
@@ -405,7 +362,7 @@ mod tests {
 
         // A brand new source — as after a restart — with no network behind it.
         let second = CelestrakSatellites::new(http).persisting_in(&dir);
-        let adopted = second.load_stored().await.expect("stored elements adopted");
+        let adopted = second.store.load(MAX_ELEMENT_AGE).await.expect("stored elements adopted");
         assert_eq!(adopted.elements.len(), elements().len());
 
         let obs = propagate_all(&adopted.elements, Utc::now(), &SourceId::new("celestrak"));
@@ -421,12 +378,13 @@ mod tests {
         let dir = scratch("stale");
         let source = CelestrakSatellites::new(HttpClient::new(std::time::Duration::from_secs(5)).unwrap()).persisting_in(&dir);
         source
-            .to_disk(&ElementCache {
+            .store
+            .save(&ElementCache {
                 fetched_at: Utc::now() - MAX_ELEMENT_AGE - Duration::hours(1),
                 elements: elements(),
             })
             .await;
-        assert!(source.load_stored().await.is_none());
+        assert!(source.store.load(MAX_ELEMENT_AGE).await.is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -436,12 +394,13 @@ mod tests {
         // which is what keeps the tests and any embedded use hermetic.
         let source = CelestrakSatellites::new(HttpClient::new(std::time::Duration::from_secs(5)).unwrap());
         source
-            .to_disk(&ElementCache {
+            .store
+            .save(&ElementCache {
                 fetched_at: Utc::now(),
                 elements: elements(),
             })
             .await;
-        assert!(source.load_stored().await.is_none());
+        assert!(source.store.load(MAX_ELEMENT_AGE).await.is_none());
     }
 
     #[test]

@@ -40,6 +40,9 @@ reqwest = { version = "0.12", default-features = false, features = [
     "gzip",
     "brotli",
     "stream",
+    # Space-Track has no API key: it issues a session cookie in exchange for an
+    # account login, so a client that cannot hold a cookie cannot talk to it.
+    "cookies",
     # Resolve in-process rather than through glibc. A daemon polling ~30 hosts
     # on 15-second cadences makes a great many lookups, and glibc walks
     # /etc/resolv.conf serially — one blackholed nameserver listed first stalls

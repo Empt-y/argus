@@ -45,7 +45,22 @@ pub struct HttpClient {
 
 impl HttpClient {
     pub fn new(timeout: Duration) -> Result<Self, SourceError> {
+        Self::build(timeout, false)
+    }
+
+    /// A client that keeps cookies, for the one provider that authenticates
+    /// with a session rather than a header.
+    ///
+    /// Not the default, and separate on purpose: a shared cookie jar across
+    /// thirty unrelated providers is a way for one host's state to follow
+    /// requests to another. Only the driver that needs it gets one.
+    pub fn with_session(timeout: Duration) -> Result<Self, SourceError> {
+        Self::build(timeout, true)
+    }
+
+    fn build(timeout: Duration, cookies: bool) -> Result<Self, SourceError> {
         let inner = reqwest::Client::builder()
+            .cookie_store(cookies)
             .timeout(timeout)
             .connect_timeout(Duration::from_secs(15))
             // Several providers redirect between CDN hosts; a couple of hops is
@@ -64,6 +79,32 @@ impl HttpClient {
     pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
         self.max_bytes = max_bytes;
         self
+    }
+
+    /// POST a form and discard the body, keeping whatever session cookie came
+    /// back. Used for login exchanges, which answer with a cookie and nothing
+    /// worth reading.
+    ///
+    /// The form values are never logged, here or in an error: they are the
+    /// credentials themselves.
+    pub async fn post_form(&self, url: &str, form: &[(&str, &str)]) -> Result<(), SourceError> {
+        let response = self
+            .inner
+            .post(url)
+            .form(form)
+            .send()
+            .await
+            .map_err(|e| SourceError::Transport(describe(&e)))?;
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED
+            || status == reqwest::StatusCode::FORBIDDEN
+        {
+            return Err(SourceError::Auth(format!("login rejected ({status})")));
+        }
+        if !status.is_success() {
+            return Err(SourceError::Transport(format!("login failed ({status})")));
+        }
+        Ok(())
     }
 
     /// GET a URL, enforcing the size cap while the body streams rather than

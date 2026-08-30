@@ -233,9 +233,9 @@ pub fn resolve_forbidden(err: SourceError, auth: &AuthRequirement) -> SourceErro
         // An optional key may or may not be in play; treat it as throttling so
         // a keyless user is not told their absent key was rejected.
         AuthRequirement::Optional { .. } => SourceError::RateLimited { retry_after: None },
-        AuthRequirement::Required { .. } | AuthRequirement::OAuth { .. } => {
-            SourceError::Auth(msg.clone())
-        }
+        AuthRequirement::Required { .. }
+        | AuthRequirement::OAuth { .. }
+        | AuthRequirement::Login { .. } => SourceError::Auth(msg.clone()),
     }
 }
 
@@ -250,6 +250,11 @@ pub fn auth_state(auth: &AuthRequirement, has_credential: bool) -> Option<Source
         AuthRequirement::OAuth { client_id_key, .. } if !has_credential => {
             Some(SourceHealth::KeyRequired {
                 config_key: client_id_key.clone(),
+            })
+        }
+        AuthRequirement::Login { identity_key, .. } if !has_credential => {
+            Some(SourceHealth::KeyRequired {
+                config_key: identity_key.clone(),
             })
         }
         AuthRequirement::Hardware { description } if !has_credential => {
