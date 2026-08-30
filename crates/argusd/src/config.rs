@@ -199,6 +199,18 @@ pub struct ClientConfig {
     /// whole reason this setting exists.
     #[serde(default)]
     pub buildings_tileset_url: Option<String>,
+    /// A raster basemap to draw the contacts on, as an XYZ template.
+    ///
+    /// The layer catalogue describes what Argus *collects*, which is why the
+    /// generated style has no ground under it — a client that renders only the
+    /// catalogue shows contacts floating in a void. That is fine for the web
+    /// client, which brings its own imagery, and wrong for MapLibre, which
+    /// draws exactly what the style says and nothing else.
+    #[serde(default)]
+    pub basemap_tiles_url: Option<String>,
+    /// Required by most tile providers, and shown by the client verbatim.
+    #[serde(default)]
+    pub basemap_attribution: Option<String>,
     /// Prepared elevation grids, without extensions: the daemon reads
     /// `<path>.json` and `<path>.bin` for each. Built by
     /// `tools/terrain/prepare_terrain.py`.

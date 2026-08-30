@@ -34,12 +34,21 @@ pub struct ClientKeys {
     pub buildings_tileset_url: Option<String>,
 }
 
+/// A raster basemap the generated style should sit its layers on top of.
+#[derive(Debug, Clone)]
+pub struct Basemap {
+    pub tiles_url: String,
+    pub attribution: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
     pub auth: AuthMode,
     /// Extra origins allowed to call the API — the web client in development.
     pub allowed_origins: Vec<String>,
     pub client_keys: ClientKeys,
+    /// Raster basemap for clients that draw only what the style contains.
+    pub basemap: Option<Basemap>,
     /// How this server is reachable, used to build tile URLs in the style
     /// document and the pairing URL in the QR. A phone cannot use
     /// `127.0.0.1`, so this must be the LAN or Tailscale address rather than
@@ -53,6 +62,7 @@ impl Default for ApiConfig {
             auth: AuthMode::LoopbackExempt,
             allowed_origins: Vec::new(),
             client_keys: ClientKeys::default(),
+            basemap: None,
             public_url: "http://127.0.0.1:8787".into(),
         }
     }

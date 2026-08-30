@@ -166,6 +166,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 cesium_ion_token: config.client_keys.cesium_ion_token.clone(),
                 buildings_tileset_url: config.client.buildings_tileset_url.clone(),
             },
+            basemap: config.client.basemap_tiles_url.clone().map(|tiles_url| {
+                argus_api::Basemap {
+                    tiles_url,
+                    attribution: config.client.basemap_attribution.clone(),
+                }
+            }),
             public_url: config.server.public_url(),
         },
     );

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Argus talks to a daemon on your own machine, over plain HTTP.
+
+  Android has blocked cleartext by default since API 28, and rightly — but the
+  rule assumes traffic crosses the internet. This traffic does not: it goes to a
+  LAN address or over a Tailscale link, to a server the user runs themselves,
+  and there is no certificate authority that can vouch for "the box in the
+  cupboard" without either a public DNS name or a private CA on every device.
+
+  The honest way to state the trade-off: a device already inside the LAN or the
+  tailnet is a device that could read this traffic. What protects the data is
+  the network boundary and the per-device bearer token, not transport
+  encryption. That is a weaker claim than HTTPS and it should be said plainly
+  rather than hidden behind a flag nobody reads.
+
+  The upgrade path, when it matters: `tailscale serve` will terminate HTTPS with
+  a real certificate for a tailnet name, at which point the allowance below can
+  be narrowed to nothing.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
