@@ -9,12 +9,14 @@ use geozero::ToWkb;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::time::Duration;
 
+pub mod alerting;
 pub mod devices;
 pub mod horizon;
 pub mod model;
 pub mod serve;
 
 pub use model::EntityRow;
+pub use alerting::NewAlert;
 pub use serve::DeltaRow;
 
 /// What a viewport query asks for beyond its bounding box.

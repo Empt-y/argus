@@ -70,10 +70,12 @@ dependencies = [
  "argus-store",
  "chrono",
  "geo",
+ "geo-types",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]

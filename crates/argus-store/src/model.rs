@@ -270,3 +270,41 @@ pub struct DeviceRow {
     pub last_seen_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
 }
+
+/// A geofence as stored, in both encodings the system needs.
+///
+/// `geom` is for the rule engine, which runs point-in-polygon against it many
+/// thousands of times a minute and must not pay for parsing. `geom_json` is for
+/// clients, which draw it. See [`crate::alerting`] for why both travel together.
+///
+/// Not `Clone`: `geozero`'s decode wrapper is not, and a geofence set is read
+/// once per refresh and shared behind an `Arc` rather than copied.
+#[derive(Debug, sqlx::FromRow)]
+pub struct GeofenceRow {
+    pub geofence_id: i64,
+    pub name: String,
+    pub rule: serde_json::Value,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub geom: geozero::wkb::Decode<geo_types::Geometry<f64>>,
+    pub geom_json: serde_json::Value,
+}
+
+/// One alert that fired.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct AlertRow {
+    pub alert_id: i64,
+    pub geofence_id: Option<i64>,
+    pub entity_kind: String,
+    pub entity_key: String,
+    pub fired_at: DateTime<Utc>,
+    pub severity: String,
+    pub message: String,
+    pub attrs: serde_json::Value,
+    pub acknowledged_at: Option<DateTime<Utc>>,
+    /// Device names that have already been shown this alert.
+    pub delivered_to: serde_json::Value,
+    pub lon: Option<f64>,
+    pub lat: Option<f64>,
+}
