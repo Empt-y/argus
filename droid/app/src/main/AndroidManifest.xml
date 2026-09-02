@@ -13,10 +13,26 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|keyboardHidden|uiMode">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+              The pairing QR argusd prints on its console is a link:
+              argus://pair?server=<url>&code=<code>. Claiming the scheme means
+              the phone's own camera app opens it here with both fields filled
+              in, so pairing needs no camera permission and no QR library in
+              this app. singleTask above is what routes a scan into the running
+              instance rather than starting a second one over the map.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="argus" android:host="pair" />
             </intent-filter>
         </activity>
     </application>

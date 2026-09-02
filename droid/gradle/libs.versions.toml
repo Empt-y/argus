@@ -7,6 +7,7 @@ agp = "9.3.2"
 kotlin = "2.4.10"
 composeBom = "2026.08.00"
 activityCompose = "1.13.0"
+lifecycle = "2.11.0"
 maplibre = "13.6.0"
 okhttp = "4.12.0"
 coroutines = "1.9.0"
@@ -19,6 +20,10 @@ compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
 compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+# The map is an AndroidView with its own lifecycle, and the app state that
+# drives it has to outlive a rotation; both of those are what these two are for.
+lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
 maplibre = { group = "org.maplibre.gl", name = "android-sdk", version.ref = "maplibre" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
