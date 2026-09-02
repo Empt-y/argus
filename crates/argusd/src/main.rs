@@ -516,6 +516,14 @@ fn build_sources(
         )));
     }
 
+    // Aviation hazards. Global despite the US operator: the Aviation Weather
+    // Center aggregates SIGMETs from watch offices worldwide.
+    if enabled("sigmets") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::Sigmets::new(
+            http.clone(),
+        )));
+    }
+
     // Radiosondes. Their own layer rather than joining `flights`: both are
     // EntityKind::Aircraft and reuse the same track machinery, but a weather
     // balloon and an airliner are different things to switch on and off, and

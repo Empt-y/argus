@@ -111,6 +111,15 @@ static OVERRIDES: &[(&str, Override)] = &[
     ("flights", |s| {
         s.max_zoom = 14;
     }),
+    ("sigmets", |s| {
+        // An area layer whose meaning is its polygon, like weather-alerts, and
+        // wanted at low zoom for the same reason: an aviation hazard is
+        // something to see before you go looking for it.
+        s.geometry = GeometryClass::Area;
+        s.color = "#eb5757".into();
+        s.min_zoom = 0;
+        s.max_zoom = 10;
+    }),
     ("radiosondes", |s| {
         // Aircraft-coloured by default, which would make a balloon
         // indistinguishable from an airliner. Cyan, and visible from further
