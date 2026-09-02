@@ -853,6 +853,88 @@ async fn sources_and_layers_report_health_honestly() {
     assert!(layer["style"]["color"].as_str().unwrap().starts_with('#'));
 }
 
+/// A failover chain is one feed, not several.
+///
+/// Found by looking at the Android sources sheet: "Aircraft (adsb.lol)"
+/// appeared twice — once as the chain, once as the provider serving it — with
+/// 1,398 observations against 317,763. Nothing recorded that one was inside the
+/// other, so `/v1/layers` also summed both and reported a layer total larger
+/// than the work actually done.
+#[tokio::test]
+async fn a_chain_and_its_providers_are_distinguishable_and_counted_once() {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    // A chain over the flights layer, with the fixture's `test-adsb` as one of
+    // its providers and a second that has never answered.
+    sqlx::query(
+        "INSERT INTO sources (source_id, layer_id, display_name, entity_kind,
+                              cost_class, state, last_success, observations, member_of)
+         VALUES ('flights', 'flights', 'Aircraft (chain)', 'aircraft', 'free',
+                 'live', now(), 100, NULL),
+                ('backup-adsb', 'flights', 'Aircraft (backup)', 'aircraft', 'free',
+                 'unknown', NULL, 0, 'flights')",
+    )
+    .execute(state.store.pool())
+    .await
+    .expect("seed a chain");
+    sqlx::query("UPDATE sources SET member_of = 'flights' WHERE source_id = 'test-adsb'")
+        .execute(state.store.pool())
+        .await
+        .expect("make the fixture source a member");
+
+    let (status, body) = get(&state, "/v1/sources", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    let listed = json(&body);
+    let rows = listed["sources"].as_array().unwrap();
+
+    // Ordered so a client can render the hierarchy by walking the list: the
+    // chain first, then the providers inside it.
+    assert_eq!(rows[0]["source_id"], "flights");
+    assert!(rows[0]["member_of"].is_null(), "a chain belongs to nothing");
+    for member in &rows[1..] {
+        assert_eq!(
+            member["member_of"], "flights",
+            "every remaining row is inside the chain: {member}"
+        );
+    }
+
+    // The layer total counts the chain's work once, not the chain plus each
+    // member's contribution to it.
+    let (_, body) = get(&state, "/v1/layers", LOOPBACK).await;
+    let listed = json(&body);
+    let layer = listed["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["id"] == "flights")
+        .expect("flights layer");
+    assert_eq!(
+        layer["observations"], 100,
+        "3 from the fixture member must not be added to the chain's 100"
+    );
+    // And the layer is named after the thing that represents it, not after
+    // whichever member happens to rank best right now.
+    assert_eq!(layer["display_name"], "Aircraft (chain)");
+}
+
+/// A source that is nobody's member still reports on its own.
+#[tokio::test]
+async fn a_standalone_source_is_not_treated_as_a_chain_member() {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let (_, body) = get(&state, "/v1/sources", LOOPBACK).await;
+    let listed = json(&body);
+    let row = &listed["sources"][0];
+    assert_eq!(row["source_id"], "test-adsb");
+    assert!(row["member_of"].is_null());
+
+    let (_, body) = get(&state, "/v1/layers", LOOPBACK).await;
+    let listed = json(&body);
+    assert_eq!(listed["layers"][0]["observations"], 3);
+}
+
 #[tokio::test]
 async fn a_tile_over_the_seeded_aircraft_contains_them() {
     let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {

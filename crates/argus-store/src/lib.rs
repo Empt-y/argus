@@ -556,21 +556,30 @@ impl Store {
     /// Health columns are deliberately untouched on conflict: a restart must not
     /// reset a source's observation count or wipe the record of why it was
     /// failing.
+    /// Register a source, saying whether it stands on its own.
+    ///
+    /// `member_of` is `None` for a plain source or a failover chain, and names
+    /// the chain for a provider inside one. Without it a chain and the provider
+    /// currently serving it are indistinguishable rows, which showed up as the
+    /// same feed listed twice and as layer observation totals that counted the
+    /// chain's work and each member's contribution to it. See migration 0007.
     pub async fn register_source(
         &self,
         descriptor: &argus_core::SourceDescriptor,
+        member_of: Option<&argus_core::SourceId>,
     ) -> Result<(), StoreError> {
         sqlx::query(
             r#"
             INSERT INTO sources (source_id, layer_id, display_name, entity_kind,
-                                 cost_class, attribution)
-            VALUES ($1, $2, $3, $4, $5, $6)
+                                 cost_class, attribution, member_of)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (source_id) DO UPDATE SET
                 layer_id     = EXCLUDED.layer_id,
                 display_name = EXCLUDED.display_name,
                 entity_kind  = EXCLUDED.entity_kind,
                 cost_class   = EXCLUDED.cost_class,
                 attribution  = EXCLUDED.attribution,
+                member_of    = EXCLUDED.member_of,
                 updated_at   = now()
             "#,
         )
@@ -580,6 +589,7 @@ impl Store {
         .bind(descriptor.kind.as_str())
         .bind(model::cost_class_str(descriptor.cost))
         .bind(serde_json::to_value(&descriptor.attribution).unwrap_or_default())
+        .bind(member_of.map(argus_core::SourceId::as_str))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -652,9 +662,15 @@ impl Store {
             r#"
             SELECT source_id, layer_id, display_name, entity_kind, cost_class,
                    state, state_since, last_success, last_error, last_lag_ms,
-                   observations, attribution
+                   observations, attribution, member_of
             FROM sources
-            ORDER BY layer_id, source_id
+            -- Each chain immediately followed by its own providers, so a client
+            -- that renders this in order gets the hierarchy for free: group by
+            -- COALESCE(member_of, source_id), parent first.
+            ORDER BY layer_id,
+                     COALESCE(member_of, source_id),
+                     (member_of IS NOT NULL),
+                     source_id
             "#,
         )
         .fetch_all(&self.pool)

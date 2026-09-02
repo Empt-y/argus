@@ -65,7 +65,10 @@ impl Store {
                            WHEN 'failed'   THEN 4
                            WHEN 'unknown'  THEN 5
                            ELSE 6
-                       END AS rank
+                       END AS rank,
+                       -- 0 for a chain or a standalone source, 1 for a provider
+                       -- inside a chain. See migration 0007.
+                       (s.member_of IS NOT NULL)::int AS top
                 FROM sources s
             ),
             counts AS (
@@ -77,12 +80,23 @@ impl Store {
                 GROUP BY layer_id
             )
             SELECT r.layer_id,
-                   (array_agg(r.entity_kind  ORDER BY r.rank, r.source_id))[1] AS entity_kind,
-                   (array_agg(r.display_name ORDER BY r.rank, r.source_id))[1] AS display_name,
-                   (array_agg(r.state        ORDER BY r.rank, r.source_id))[1] AS state,
-                   array_agg(r.source_id ORDER BY r.rank, r.source_id)         AS source_ids,
+                   -- `top` sorts a chain (or a standalone source) ahead of the
+                   -- providers inside it, so the row that *represents* the
+                   -- layer wins these regardless of how a member is faring.
+                   -- Reading the name off whichever row happened to rank best
+                   -- meant the layer could be titled after a fallback that was
+                   -- merely healthier than the chain it sits in.
+                   (array_agg(r.entity_kind  ORDER BY r.top, r.rank, r.source_id))[1] AS entity_kind,
+                   (array_agg(r.display_name ORDER BY r.top, r.rank, r.source_id))[1] AS display_name,
+                   (array_agg(r.state        ORDER BY r.top, r.rank, r.source_id))[1] AS state,
+                   array_agg(r.source_id ORDER BY r.top, r.rank, r.source_id)         AS source_ids,
                    max(r.last_success)                                          AS last_success,
-                   sum(r.observations)::bigint                                  AS observations,
+                   -- Top-level rows only. A chain's members each carry their
+                   -- own contribution to the same work, so summing everything
+                   -- counts it twice: the flights layer reported 327,601
+                   -- observations where the chain alone had 321,983.
+                   COALESCE(sum(r.observations) FILTER (WHERE r.member_of IS NULL), 0)::bigint
+                                                                                AS observations,
                    -- Every contributing source's credit line, not just the
                    -- winner's: an ODbL or CC BY-NC-SA feed must be attributed
                    -- even on the days its data came from the other member.

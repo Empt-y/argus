@@ -206,10 +206,25 @@ fun SourceSheet(sources: List<SourceRow>, onDismiss: () -> Unit) {
             if (sources.isEmpty()) {
                 Text("nothing reported yet", style = MaterialTheme.typography.bodySmall)
             }
-            sources.sortedBy { it.layerId }.forEach { source ->
-                Column(Modifier.padding(vertical = 6.dp)) {
+            // Server order already nests each chain immediately above its own
+            // providers, so indentation is all this needs — no grouping pass,
+            // and a layer that gains a provider tomorrow renders correctly
+            // without an app release.
+            sources.forEach { source ->
+                val member = source.memberOf != null
+                Column(
+                    Modifier
+                        .padding(vertical = 6.dp)
+                        .padding(start = if (member) 16.dp else 0.dp)
+                ) {
                     Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                        Text(source.displayName, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = if (member) "↳ ${source.displayName}" else source.displayName,
+                            style = if (member) MaterialTheme.typography.bodySmall
+                            else MaterialTheme.typography.bodyMedium,
+                            color = if (member) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.onSurface,
+                        )
                         Text(
                             source.state,
                             style = MaterialTheme.typography.labelSmall,
@@ -218,8 +233,12 @@ fun SourceSheet(sources: List<SourceRow>, onDismiss: () -> Unit) {
                     }
                     Text(
                         buildString {
-                            append(source.layerId)
-                            append(" · ")
+                            // A member's layer is its chain's; naming it again
+                            // on every row is noise.
+                            if (!member) {
+                                append(source.layerId)
+                                append(" · ")
+                            }
                             append(source.observations)
                             append(" obs")
                             source.lastLagMs?.let { append(" · ${it} ms lag") }

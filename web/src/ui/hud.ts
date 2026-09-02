@@ -169,11 +169,18 @@ export class Hud {
         const row = document.createElement("div");
         row.className = "layer-row";
         row.style.cursor = "default";
+        // The server returns each chain immediately above its own providers, so
+        // indenting the members is enough to show the hierarchy — without it a
+        // chain and the provider serving it read as two separate feeds, and the
+        // chain's cumulative count next to the member's looks like a discrepancy.
+        const member = source.member_of !== null;
+        if (member) row.style.paddingLeft = "1rem";
         const chip = document.createElement("span");
         chip.className = `chip ${source.state}`;
         chip.textContent = stateLabel(source.state);
         const name = document.createElement("span");
-        name.textContent = source.source_id;
+        name.textContent = member ? `↳ ${source.source_id}` : source.source_id;
+        if (member) name.style.opacity = "0.75";
         const count = document.createElement("span");
         count.className = "count";
         count.textContent = source.observations.toLocaleString();

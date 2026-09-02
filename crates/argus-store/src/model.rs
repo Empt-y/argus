@@ -50,6 +50,10 @@ pub struct TrackPoint {
 pub struct SourceRow {
     pub source_id: String,
     pub layer_id: String,
+    /// The failover chain this provider belongs to, or `None` if it stands on
+    /// its own. A client that ignores this shows a chain and the provider
+    /// currently serving it as two separate feeds with the same name.
+    pub member_of: Option<String>,
     pub display_name: String,
     pub entity_kind: String,
     pub cost_class: String,

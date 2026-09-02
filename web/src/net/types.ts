@@ -117,6 +117,12 @@ export interface Source {
   last_lag_ms: number | null;
   observations: number;
   attribution: unknown;
+  /**
+   * The failover chain this provider sits inside, or null if it stands on its
+   * own. A chain and the provider currently serving it are otherwise
+   * indistinguishable rows describing the same work.
+   */
+  member_of: string | null;
 }
 
 export interface Health {

@@ -78,12 +78,19 @@ impl Runtime {
         self.spawn_disk_guard(budget_bytes, warn_fraction);
 
         for source in &self.sources {
-            self.store.register_source(source.descriptor()).await?;
+            self.store.register_source(source.descriptor(), None).await?;
             // Members carry their own rows: observations reference the provider
             // that actually produced them, and per-provider health is what
             // makes "serving via the fallback" inspectable rather than folklore.
+            //
+            // They are registered *as members*, so a client can tell the chain
+            // apart from the providers inside it. Left unsaid, the two are
+            // indistinguishable rows and the chain shows up as a second feed
+            // with the same name and a different observation count.
             for member in source.members() {
-                self.store.register_source(member).await?;
+                self.store
+                    .register_source(member, Some(&source.descriptor().id))
+                    .await?;
             }
         }
 

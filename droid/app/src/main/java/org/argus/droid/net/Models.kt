@@ -59,6 +59,13 @@ data class LayersResponse(val layers: List<LayerView> = emptyList())
 data class SourceRow(
     @SerialName("source_id") val sourceId: String,
     @SerialName("layer_id") val layerId: String,
+    /**
+     * The failover chain this provider sits inside, or null if it stands on its
+     * own. Ignoring it is what made the sources sheet list "Aircraft
+     * (adsb.lol)" twice — once as the chain, once as the provider serving it —
+     * with two different observation counts.
+     */
+    @SerialName("member_of") val memberOf: String? = null,
     @SerialName("display_name") val displayName: String,
     val state: String,
     @SerialName("last_success") val lastSuccess: String? = null,
