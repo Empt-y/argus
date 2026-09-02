@@ -175,7 +175,11 @@ pub async fn require_device(
             })?;
             Caller::Device(Box::new(device))
         }
-        None if state.config.auth == AuthMode::LoopbackExempt && peer.ip().is_loopback() => {
+        None
+            if state.config.auth == AuthMode::LoopbackExempt
+                && peer.ip().is_loopback()
+                && !was_forwarded(&request) =>
+        {
             Caller::Local
         }
         None => {
@@ -189,9 +193,59 @@ pub async fn require_device(
     Ok(next.run(request).await)
 }
 
+/// Whether this request reached us through a reverse proxy.
+///
+/// This closes a hole that only appears once something is put in front of the
+/// daemon. `loopback_exempt` justifies itself on the grounds that a process
+/// able to reach loopback here could already read the config file — true of a
+/// local `curl`, and false the moment a proxy terminates connections on
+/// loopback and forwards other people's. `tailscale serve` does exactly that:
+/// with it running, every device on the tailnet arrived at `127.0.0.1` and was
+/// waved through, and `GET /v1/layers` answered 200 with no token from another
+/// machine entirely.
+///
+/// Measured rather than assumed — `tailscale serve` sets `X-Forwarded-Proto`,
+/// which is already how [`crate::routes::tiles`] knows to write `https` into
+/// the style it generates. A request carrying any of these did not originate
+/// where its socket says it did, so the exemption must not apply to it.
+///
+/// Forging a header cannot gain anything: it only ever removes an exemption.
+fn was_forwarded(request: &Request) -> bool {
+    const PROXY_HEADERS: [&str; 4] = [
+        "x-forwarded-for",
+        "x-forwarded-proto",
+        "x-forwarded-host",
+        "forwarded",
+    ];
+    PROXY_HEADERS
+        .iter()
+        .any(|name| request.headers().contains_key(*name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_forwarded_request_is_never_treated_as_local() {
+        // The tailnet case: tailscale serve terminates on loopback and proxies
+        // the whole tailnet through it, so the peer address is a lie.
+        let mut forwarded = Request::new(axum::body::Body::empty());
+        forwarded
+            .headers_mut()
+            .insert("x-forwarded-proto", "https".parse().unwrap());
+        assert!(was_forwarded(&forwarded));
+
+        let mut for_header = Request::new(axum::body::Body::empty());
+        for_header
+            .headers_mut()
+            .insert("x-forwarded-for", "100.64.0.9".parse().unwrap());
+        assert!(was_forwarded(&for_header));
+
+        // A local curl carries none of them and keeps the exemption, which is
+        // the whole convenience the mode exists for.
+        assert!(!was_forwarded(&Request::new(axum::body::Body::empty())));
+    }
 
     #[test]
     fn a_pairing_code_works_exactly_once() {

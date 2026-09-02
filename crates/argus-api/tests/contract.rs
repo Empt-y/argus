@@ -230,6 +230,63 @@ async fn a_remote_caller_without_a_token_is_refused() {
     assert_eq!(status, StatusCode::OK);
 }
 
+/// A reverse proxy on loopback must not hand its callers the loopback
+/// exemption.
+///
+/// Found by running it: with `tailscale serve` in front of the daemon,
+/// `GET /v1/layers` answered 200 with no token from another machine on the
+/// tailnet, because serve terminates on 127.0.0.1 and the peer address said
+/// loopback. The exemption's justification — that anything reaching loopback
+/// could already read the config file — stops being true the moment something
+/// forwards other people's connections through it.
+#[tokio::test]
+async fn a_proxied_request_does_not_inherit_the_loopback_exemption() {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    // Same socket, same policy: the only difference is the header a proxy adds.
+    let (status, _) = get(&state, "/v1/layers", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK, "a local caller keeps the exemption");
+
+    for header in ["x-forwarded-for", "x-forwarded-proto", "x-forwarded-host", "forwarded"] {
+        let (status, _) = send(
+            &state,
+            Request::builder()
+                .uri("/v1/layers")
+                .header(header, "example")
+                .body(Body::empty())
+                .unwrap(),
+            LOOPBACK,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "a request carrying {header} did not originate on loopback"
+        );
+    }
+
+    // And a real token still works through the proxy, or the fix would have
+    // closed the hole by breaking the feature.
+    let issued = state
+        .store
+        .create_device("phone", &["read".to_string()])
+        .await
+        .expect("device");
+    let (status, _) = send(
+        &state,
+        Request::builder()
+            .uri("/v1/layers")
+            .header("x-forwarded-proto", "https")
+            .header("authorization", format!("Bearer {}", issued.token))
+            .body(Body::empty())
+            .unwrap(),
+        LOOPBACK,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
 #[tokio::test]
 async fn loopback_is_not_exempt_when_the_policy_says_required() {
     let Some((state, _guard)) = state(AuthMode::Required).await else {

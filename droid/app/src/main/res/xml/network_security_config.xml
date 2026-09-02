@@ -1,27 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Argus talks to a daemon on your own machine, over plain HTTP.
+  HTTPS everywhere except the development loopback.
 
-  Android has blocked cleartext by default since API 28, and rightly — but the
-  rule assumes traffic crosses the internet. This traffic does not: it goes to a
-  LAN address or over a Tailscale link, to a server the user runs themselves,
-  and there is no certificate authority that can vouch for "the box in the
-  cupboard" without either a public DNS name or a private CA on every device.
+  This used to permit cleartext to anything, with the trade-off written down
+  honestly: traffic to a LAN or tailnet address was protected by the network
+  boundary and a bearer token rather than by transport encryption. That is a
+  weaker claim than HTTPS and it is no longer necessary.
 
-  The honest way to state the trade-off: a device already inside the LAN or the
-  tailnet is a device that could read this traffic. What protects the data is
-  the network boundary and the per-device bearer token, not transport
-  encryption. That is a weaker claim than HTTPS and it should be said plainly
-  rather than hidden behind a flag nobody reads.
+  `tailscale serve` now terminates TLS for https://athena.tail1f65b0.ts.net with
+  a real certificate and proxies to argusd on loopback, so the address a phone
+  actually uses — on the LAN, on mobile data, anywhere — is HTTPS. The blanket
+  allowance bought nothing except the ability to misconfigure the app into
+  sending a device token in the clear.
 
-  The upgrade path, when it matters: `tailscale serve` will terminate HTTPS with
-  a real certificate for a tailnet name, at which point the allowance below can
-  be narrowed to nothing.
+  What remains permitted is the two addresses that only ever mean "this
+  machine, during development":
+
+    127.0.0.1  — `adb reverse tcp:8787 tcp:8787` over USB
+    10.0.2.2   — the emulator's alias for its host
+
+  Neither leaves the device. Any other host, including a plain http:// LAN
+  address, is now refused by the platform rather than by a code review.
 -->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
+
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
 </network-security-config>
