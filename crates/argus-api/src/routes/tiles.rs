@@ -14,13 +14,42 @@ use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use chrono::SecondsFormat;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::json;
 
 #[derive(Debug, Deserialize)]
 pub struct TileQuery {
     pub layers: Option<String>,
     pub at: Option<String>,
+}
+
+/// `/v1/style.json?at=` — the DVR instant, carried by the style rather than
+/// applied to each source afterwards.
+///
+/// This exists for MapLibre. A vector source's tile URL template is fixed once
+/// the style is loaded: there is no supported way to rewrite it in place, so a
+/// client that wanted to scrub would have to tear down and re-add every source
+/// and every layer that referenced it, in order, and get the draw order right
+/// again by hand. Putting `at` in the style URL makes the whole scrub one
+/// `setStyle(url)` — the server rebuilds a self-consistent style and the client
+/// stays a slider bound to a string. It also gives each instant a distinct URL,
+/// which is exactly what MapLibre's on-disk style cache keys on, so a past
+/// instant caches correctly and live never does.
+#[derive(Debug, Default, Deserialize)]
+pub struct StyleQuery {
+    pub at: Option<String>,
+    /// Ground only: the basemap, and none of the layers Argus collects.
+    ///
+    /// This is what an offline region is cut from. MapLibre's offline manager
+    /// takes a style and downloads every tile it references, which for the full
+    /// style would mean packaging the live contacts too — freezing an hour of
+    /// aircraft into a file and replaying them forever as though they were
+    /// current. What is worth having on a phone with no signal is the ground:
+    /// the basemap is the part that does not change, and the contacts should be
+    /// live or absent, never stale.
+    #[serde(default)]
+    pub basemap_only: bool,
 }
 
 /// `/v1/tiles/{z}/{x}/{y}.mvt` — every layer, or the ones named in `?layers=`.
@@ -72,12 +101,22 @@ async fn render(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    // Live tiles must not be cached; a DVR tile describes a fixed past instant
-    // and is immutable once the rollup behind it has settled.
+    // A DVR tile describes a fixed past instant and is immutable once the
+    // rollup behind it has settled. A live tile is not immutable, but it is not
+    // uncacheable either: it is true for about as long as the ingest cadence,
+    // and saying so is what makes a map refresh itself.
+    //
+    // MapLibre Native re-requests a tile when its cached copy expires, and has
+    // no other API for "this is stale now" — there is no way to invalidate a
+    // vector source in place. Under `no-store` the consequence was a map that
+    // never moved until the user panned: contacts frozen at whatever second the
+    // style happened to load. Fifteen seconds is under the fastest driver's
+    // poll interval, so nothing is served past its usefulness, and the map
+    // advances on its own.
     let cache = if request.at.is_some() {
         "public, max-age=3600"
     } else {
-        "no-store"
+        "public, max-age=15"
     };
 
     Ok((
@@ -138,9 +177,21 @@ fn style_base(headers: &axum::http::HeaderMap, public_url: &str) -> String {
 pub async fn style(
     State(state): State<ApiState>,
     headers: axum::http::HeaderMap,
-) -> ApiResult<Json<Value>> {
+    Query(query): Query<StyleQuery>,
+) -> ApiResult<Response> {
     let rows = state.store.layers().await?;
     let base = style_base(&headers, &state.config.public_url);
+
+    // Parsed and re-serialised rather than pasted through, so a malformed
+    // instant fails here — once, with a message — instead of arriving as a 400
+    // on every tile request the style goes on to generate.
+    let at = query.at.as_deref().map(parse_instant).transpose()?;
+    // Serialised in the `Z` form rather than with a numeric offset, because
+    // `+00:00` in a query string decodes to a space. The tile route restores
+    // that, but a URL that never needed rescuing is better than one that does.
+    let at_suffix = at
+        .map(|at| format!("?at={}", at.to_rfc3339_opts(SecondsFormat::Millis, true)))
+        .unwrap_or_default();
 
     let mut sources = serde_json::Map::new();
     let mut style_layers = Vec::new();
@@ -167,6 +218,9 @@ pub async fn style(
     }
 
     for row in rows {
+        if query.basemap_only {
+            break;
+        }
         let Some(kind) = argus_store::model::parse_entity_kind(&row.entity_kind) else {
             continue;
         };
@@ -177,7 +231,7 @@ pub async fn style(
             id.clone(),
             json!({
                 "type": "vector",
-                "tiles": [format!("{base}/v1/tiles/{id}/{{z}}/{{x}}/{{y}}.mvt")],
+                "tiles": [format!("{base}/v1/tiles/{id}/{{z}}/{{x}}/{{y}}.mvt{at_suffix}")],
                 "minzoom": style.min_zoom,
                 "maxzoom": style.max_zoom,
             }),
@@ -245,12 +299,30 @@ pub async fn style(
         }
     }
 
-    Ok(Json(json!({
-        "version": 8,
-        "name": "Argus",
-        "sources": sources,
-        "layers": style_layers,
-    })))
+    // A style describing a fixed past instant is immutable; a live one names
+    // the layers that exist right now and must not outlive them. The same rule
+    // the tile route follows, for the same reason.
+    let cache = if at.is_some() || query.basemap_only {
+        "public, max-age=3600"
+    } else {
+        "no-store"
+    };
+
+    Ok((
+        [(header::CACHE_CONTROL, cache)],
+        Json(json!({
+            "version": 8,
+            "name": "Argus",
+            // Echoed so a client can label what it is showing without having to
+            // remember which URL it asked for.
+            "metadata": {
+                "argus:at": at.map(|t| t.to_rfc3339_opts(SecondsFormat::Millis, true)),
+            },
+            "sources": sources,
+            "layers": style_layers,
+        })),
+    )
+        .into_response())
 }
 
 #[cfg(test)]

@@ -71,6 +71,13 @@ async fn state(auth: AuthMode) -> Option<(ApiState, tokio::sync::MutexGuard<'sta
             ApiConfig {
                 auth,
                 public_url: "http://argus.test:8787".into(),
+                // Configured, because a style with no ground under it is a
+                // different document — the basemap has to be in the fixture for
+                // the draw order and the offline style to mean anything.
+                basemap: Some(argus_api::Basemap {
+                    tiles_url: "https://tiles.test/{z}/{x}/{y}.png".into(),
+                    attribution: Some("© Test".into()),
+                }),
                 ..ApiConfig::default()
             },
         ),
@@ -144,6 +151,33 @@ async fn send(
         .expect("body")
         .to_vec();
     (status, body)
+}
+
+/// Like [`get`], but keeps the response headers.
+///
+/// Cache-Control is part of this contract rather than a detail: it is what
+/// stops a client caching a live style, and a test that only reads the body
+/// cannot see it.
+async fn get_full(
+    state: &ApiState,
+    uri: &str,
+    peer: std::net::SocketAddr,
+) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    let mut request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer));
+    let response = argus_api::router(state.clone())
+        .oneshot(request)
+        .await
+        .expect("router responds");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024)
+        .await
+        .expect("body")
+        .to_vec();
+    (status, headers, body)
 }
 
 fn json(body: &[u8]) -> Value {
@@ -315,6 +349,133 @@ async fn entities_answers_a_viewport_and_reports_whether_it_truncated() {
     assert_eq!(json(&body)["truncated"], true);
 }
 
+/// "Live" has to mean live.
+///
+/// This is the bug the Android client found by being looked at: an aircraft
+/// last seen three days ago was drawn on the map exactly like one in the sky,
+/// because the live query had no freshness horizon at all — 1,213 of 1,528
+/// contacts on a real map were more than a day old. Asking for the entity by
+/// key still answers, because a client that names something specific is owed a
+/// truthful answer about it rather than a 404.
+#[tokio::test]
+async fn a_contact_nobody_has_seen_for_days_is_not_in_the_live_view() {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    seed_aircraft(&state.store).await;
+    // Same box, same layer; the only thing separating this one is its age.
+    let stale = Observation::new(
+        SourceId::new("test-adsb"),
+        EntityId::aircraft("stale1"),
+        Utc::now() - Duration::days(3),
+        Quality::Live,
+    )
+    .with_position(Position {
+        lon: -97.72,
+        lat: 30.28,
+        alt_m: Some(0.0),
+        datum: argus_core::entity::AltitudeDatum::Barometric,
+    })
+    .with_label("PARKED");
+    state
+        .store
+        .write_observations(&[stale])
+        .await
+        .expect("a three-day-old fix is plausible, just not current");
+
+    let (status, body) = get(
+        &state,
+        "/v1/entities?bbox=-98,30,-97,31&layers=flights",
+        LOOPBACK,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let listed = json(&body);
+    let keys: Vec<&str> = listed["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["entity_key"].as_str().unwrap())
+        .collect();
+    assert!(keys.contains(&"a1b2c3"), "the fresh contacts are still there");
+    assert!(
+        !keys.contains(&"stale1"),
+        "a three-day-old aircraft is not a current contact: {keys:?}"
+    );
+
+    // The layer rail counts under the same horizon, or it advertises 1,528
+    // aircraft over a map drawing 212.
+    let (_, layers) = get(&state, "/v1/layers", LOOPBACK).await;
+    let flights = json(&layers)["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["id"] == "flights")
+        .cloned()
+        .expect("flights layer");
+    assert_eq!(flights["live_entities"], 3);
+
+    // Named directly, it still answers — with its real age, so the caller can
+    // see for itself that this is a stale contact rather than a missing one.
+    let (status, detail) = get(&state, "/v1/entities/aircraft/stale1", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json(&detail)["label"], "PARKED");
+}
+
+/// Kinds expire on their own schedule.
+///
+/// A flat horizon cannot be right for both: an earthquake from last Tuesday is
+/// still a true statement about where the ground moved, and hiding it after
+/// fifteen minutes would empty the hazard layers.
+#[tokio::test]
+async fn an_event_outlives_an_aircraft_by_a_long_way() {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let day_old = Utc::now() - Duration::hours(30);
+    let quake = Observation::new(
+        SourceId::new("test-adsb"),
+        EntityId::new(argus_core::EntityKind::Event, "quake1"),
+        day_old,
+        Quality::Live,
+    )
+    .with_position(Position {
+        lon: -97.72,
+        lat: 30.28,
+        alt_m: None,
+        datum: argus_core::entity::AltitudeDatum::Wgs84Ellipsoid,
+    })
+    .with_label("M4.2");
+    let aircraft = Observation::new(
+        SourceId::new("test-adsb"),
+        EntityId::aircraft("olda1"),
+        day_old,
+        Quality::Live,
+    )
+    .with_position(Position {
+        lon: -97.72,
+        lat: 30.29,
+        alt_m: Some(0.0),
+        datum: argus_core::entity::AltitudeDatum::Barometric,
+    });
+    state
+        .store
+        .write_observations(&[quake, aircraft])
+        .await
+        .expect("seed");
+
+    let (_, body) = get(&state, "/v1/entities?bbox=-98,30,-97,31", LOOPBACK).await;
+    let listed = json(&body);
+    let keys: Vec<&str> = listed["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["entity_key"].as_str().unwrap())
+        .collect();
+    assert!(keys.contains(&"quake1"), "a day-old quake is still news: {keys:?}");
+    assert!(!keys.contains(&"olda1"), "a day-old aircraft is not: {keys:?}");
+}
+
 #[tokio::test]
 async fn a_kind_filter_and_a_layer_filter_both_apply() {
     let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
@@ -481,6 +642,132 @@ async fn the_style_document_points_at_the_public_url() {
         .map(|l| l["id"].as_str().unwrap())
         .collect();
     assert!(ids.contains(&"flights-point"));
+    // MapLibre draws in array order, so ground that arrives last is ground
+    // painted over every contact on the map.
+    assert_eq!(ids.first(), Some(&"basemap"));
+}
+
+/// A live tile expires, and soon.
+///
+/// This is load-bearing rather than cosmetic. MapLibre Native has no way to
+/// invalidate a vector source in place — a tile is re-requested when its cached
+/// copy expires and at no other time — so the freshness of the whole live map
+/// is decided by this one header. Served as `no-store` it froze until the user
+/// panned.
+#[tokio::test]
+async fn a_live_tile_expires_soon_enough_for_the_map_to_advance() {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    seed_aircraft(&state.store).await;
+    // Over the seeded fixture near Austin, so there is a body and therefore
+    // headers — an empty tile returns 204 before it reaches them.
+    let (z, x, y) = tile_for(-97.74, 30.27, 6);
+
+    let (status, headers, _) =
+        get_full(&state, &format!("/v1/tiles/flights/{z}/{x}/{y}.mvt"), LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get(axum::http::header::CACHE_CONTROL).unwrap(),
+        "public, max-age=15",
+        "a live tile must expire, or the map never advances on its own"
+    );
+}
+
+/// The style carries the DVR instant into the tile URLs it generates.
+///
+/// This is what makes the Android scrubber possible at all: MapLibre fixes a
+/// vector source's tile template when the style loads, so the instant has to be
+/// in the style or every source has to be torn down and rebuilt to move it.
+#[tokio::test]
+async fn a_style_asked_for_a_past_instant_bakes_it_into_every_tile_url() {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    // Deliberately asked for in one form and expected back in another: the
+    // instant is parsed and re-serialised canonically rather than pasted
+    // through, so whatever a client sends becomes one `Z`-form string with no
+    // `+` for a query parser to turn into a space.
+    let at = "2026-08-30T12:00:00+00:00";
+    let canonical = "2026-08-30T12:00:00.000Z";
+    let (status, headers, body) =
+        get_full(&state, &format!("/v1/style.json?at={at}"), LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    let style = json(&body);
+
+    assert_eq!(
+        style["sources"]["flights"]["tiles"][0].as_str().unwrap(),
+        format!(
+            "http://argus.test:8787/v1/tiles/flights/{{z}}/{{x}}/{{y}}.mvt?at={canonical}"
+        ),
+        "the instant must survive into the tile template, not just the style URL"
+    );
+    assert_eq!(style["metadata"]["argus:at"], canonical);
+    // A fixed past instant is immutable, so MapLibre may cache it; live never
+    // is, and a cached live style is a map of layers that have since changed.
+    assert_eq!(
+        headers.get(axum::http::header::CACHE_CONTROL).unwrap(),
+        "public, max-age=3600"
+    );
+
+    let (_, live_headers, live_body) = get_full(&state, "/v1/style.json", LOOPBACK).await;
+    assert!(json(&live_body)["metadata"]["argus:at"].is_null());
+    assert!(
+        !json(&live_body)["sources"]["flights"]["tiles"][0]
+            .as_str()
+            .unwrap()
+            .contains("at="),
+    );
+    assert_eq!(
+        live_headers.get(axum::http::header::CACHE_CONTROL).unwrap(),
+        "no-store"
+    );
+}
+
+/// Ground without contacts — the style an offline region is cut from.
+///
+/// MapLibre's offline manager downloads every tile a style references. Handed
+/// the full style it would package the live layers too, and a phone with no
+/// signal would then show an hour-old sky as though it were now. The basemap is
+/// the part worth having offline because it is the part that does not change.
+#[tokio::test]
+async fn a_basemap_only_style_carries_no_argus_layers() {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let (status, body) = get(&state, "/v1/style.json?basemap_only=true", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    let style = json(&body);
+    assert!(
+        style["sources"]["flights"].is_null(),
+        "a live layer must not be downloadable as though it were ground"
+    );
+    let ids: Vec<&str> = style["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["basemap"], "ground only");
+
+    // And the default is unchanged: everything, as before.
+    let (_, full) = get(&state, "/v1/style.json", LOOPBACK).await;
+    assert!(json(&full)["sources"]["flights"].is_object());
+}
+
+/// A style asked for nonsense fails once, here, rather than loading and then
+/// failing on every tile it goes on to request.
+#[tokio::test]
+async fn a_style_with_an_unparseable_instant_is_refused() {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let (status, body) = get(&state, "/v1/style.json?at=yesterday", LOOPBACK).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        String::from_utf8_lossy(&body).contains("yesterday"),
+        "the error should name what it could not parse"
+    );
 }
 
 /// The headline claim of this phase: a client time-travels by adding one query
