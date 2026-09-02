@@ -406,13 +406,31 @@ fn build_sources(
         let providers: Vec<std::sync::Arc<dyn argus_core::Source>> = vec![
             std::sync::Arc::new(argus_ingest::sources::ReadsbProvider::adsb_lol(http.clone())),
             std::sync::Arc::new(argus_ingest::sources::ReadsbProvider::adsb_fi(http.clone())),
-            // Last resort. Metered at 400 credits a day anonymously, so its
-            // allowance is only spent when both unmetered networks are down —
-            // which is precisely when it is worth having.
-            std::sync::Arc::new(argus_ingest::sources::OpenSky::new(http.clone())),
         ];
         sources.push(std::sync::Arc::new(argus_ingest::ProviderChain::new(
             "flights", providers,
+        )));
+
+        // OpenSky is not in that chain, and moving it out is the change that
+        // makes global coverage possible at all.
+        //
+        // As a chain member it was a last-resort *substitute* for the
+        // aggregators — polled only when they failed, and only over the same
+        // AOI. But its `states/all` endpoint is the one genuinely global feed
+        // available: adsb.lol's `/v2/all` answers 503, and covering the planet
+        // through a 250 nm radius API would take ~750 requests per cycle.
+        //
+        // So it runs alongside instead: the aggregators sweep the declared AOIs
+        // at full cadence, and this sweeps everywhere else at whatever its
+        // allowance permits. Both write into the `flights` layer under the same
+        // natural key, so an aircraft seen by both merges rather than doubling —
+        // which is exactly what `EntityId` was specified to do.
+        //
+        // It also remains the fallback it used to be, and a better one: if both
+        // aggregators die, what is left is a slower picture of the whole world
+        // rather than a slower picture of one circle.
+        sources.push(std::sync::Arc::new(argus_ingest::sources::OpenSky::new(
+            http.clone(),
         )));
     }
 

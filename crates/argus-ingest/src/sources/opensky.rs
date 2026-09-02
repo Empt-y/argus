@@ -31,9 +31,19 @@ const ANON_DAILY_CREDITS: u32 = 400;
 /// for a while after the last position fix.
 const MAX_POSITION_AGE_S: i64 = 120;
 
-/// OpenSky's own cadence: state vectors update roughly every 5–10 s
-/// anonymously, so polling faster only spends credits for nothing.
-const CADENCE_SECS: u64 = 30;
+/// How often the global sweep runs, set by the allowance rather than by taste.
+///
+/// `states/all` with no bounding box is the whole planet in one request, and
+/// costs the top tariff of 4 credits. Anonymously that is 400/day = 100 polls,
+/// so anything faster than ~14.4 minutes runs out before the day does and
+/// leaves a hole rather than a gap. Fifteen minutes fits with a little room.
+///
+/// An OpenSky account raises the allowance to 4,000/day, which is a poll every
+/// ~90 s — the difference between a global picture that is continuously fresh
+/// and one that refreshes about as fast as an aircraft position goes stale. The
+/// account is free for non-commercial use and is the single change that makes
+/// global coverage genuinely useful; see `AuthRequirement::Optional` below.
+const CADENCE_SECS: u64 = 900;
 
 pub struct OpenSky {
     descriptor: SourceDescriptor,
@@ -49,7 +59,14 @@ impl OpenSky {
                 display_name: "Aircraft (OpenSky Network)".into(),
                 kind: EntityKind::Aircraft,
                 cadence: Cadence::every(CADENCE_SECS),
-                coverage: Coverage::Bounded,
+                // Global, not Bounded. `states/all` without a bounding box
+                // returns every aircraft the network can see in one request,
+                // which is the only practical way to cover the planet: the
+                // community aggregators are radius-limited to 250 nm, so
+                // "global" through them would mean ~750 requests per cycle and
+                // a swift ban. This source is the global sweep; adsb.lol and
+                // adsb.fi cover the declared AOIs at full cadence.
+                coverage: Coverage::Global,
                 // Anonymous access works fully. An account raises the allowance
                 // tenfold but is never required, so this must not gate the
                 // source — see AuthRequirement::Optional.
@@ -65,7 +82,19 @@ impl OpenSky {
                         "Data from The OpenSky Network, https://opensky-network.org".into(),
                     ),
                 },
-                base_quality: Quality::Live,
+                // Delayed, not Live — and this is a measured fact, not caution.
+                // The anonymous feed publishes on a deliberate one-hour lag:
+                // `states/all` returns a `time` field 60.1 minutes behind the
+                // wall clock, with every position uniformly that old. So these
+                // observations are perfectly good history and are never a
+                // current picture, and a client must not draw them as though
+                // they were.
+                //
+                // A registered account is documented to lift the delay (and
+                // raises the allowance to 4,000 credits/day). If one is
+                // configured and the measured lag drops, this should become
+                // Live — see the `AuthRequirement::Optional` above.
+                base_quality: Quality::Delayed,
                 quota: Some(Quota {
                     limit: ANON_DAILY_CREDITS,
                     window: std::time::Duration::from_secs(86_400),

@@ -29,6 +29,15 @@ const FPM_TO_MPS: f64 = 0.00508;
 /// These endpoints cap the search radius. Asking for more is rejected outright.
 const MAX_RADIUS_NM: f64 = 250.0;
 
+/// Ceiling on how many radius queries one poll may make. A free community
+/// endpoint does not owe us the planet a circle at a time.
+const MAX_TILES: usize = 24;
+
+/// Minimum gap between the tile requests of a single poll. These endpoints
+/// allow about one request a second; `MAX_TILES` at this spacing is a 23-second
+/// poll, which is why the ceiling is where it is.
+const TILE_SPACING: std::time::Duration = std::time::Duration::from_millis(1_100);
+
 /// Aircraft positions age fast. Anything this stale is a receiver still
 /// reporting a contact it has not actually heard from recently.
 const MAX_POSITION_AGE_S: f64 = 120.0;
@@ -111,16 +120,99 @@ impl ReadsbProvider {
 /// asked for; results outside the box are filtered after decoding. Erring
 /// outward is deliberate — a radius that inscribes the box would silently miss
 /// aircraft in its corners.
-pub fn bbox_to_center_radius(bbox: BoundingBox) -> (f64, f64, f64) {
+///
+/// Returns `None` when one circle cannot cover the box — see [`cover_bbox`],
+/// which is what callers should use. This used to clamp to [`MAX_RADIUS_NM`]
+/// and return a circle regardless, which broke the superset guarantee in the
+/// worst possible way: the request succeeded, the decode succeeded, the health
+/// stayed green, and the coverage was quietly a fraction of what was asked for.
+pub fn bbox_to_center_radius(bbox: BoundingBox) -> Option<(f64, f64, f64)> {
     // Split boxes are handled a level up; a wrapped box here would compute a
     // centre on the wrong side of the planet.
     let parts = bbox.split_at_antimeridian();
     let b = parts[0];
     let lat = (b.south + b.north) / 2.0;
     let lon = (b.west + b.east) / 2.0;
-    let corner_m = haversine_m(lat, lon, b.north, b.east);
-    let radius_nm = (corner_m / 1852.0).ceil().clamp(1.0, MAX_RADIUS_NM);
-    (lat, lon, radius_nm)
+    // All four corners, not just the north-east one.
+    //
+    // A degree of longitude shrinks towards the pole, so for a box in the
+    // northern hemisphere the *southern* corners are the far ones — measuring
+    // the NE corner alone under-reaches by the difference. The home AOI only
+    // ever fitted because `ceil()` happened to round up past the 1.4 km
+    // shortfall; a wider box does not get that luck, and the failure is once
+    // again a poll that succeeds while missing a strip of its own area.
+    let corner_m = [
+        haversine_m(lat, lon, b.north, b.east),
+        haversine_m(lat, lon, b.north, b.west),
+        haversine_m(lat, lon, b.south, b.east),
+        haversine_m(lat, lon, b.south, b.west),
+    ]
+    .into_iter()
+    .fold(0.0_f64, f64::max);
+    let radius_nm = (corner_m / 1852.0).ceil().max(1.0);
+    (radius_nm <= MAX_RADIUS_NM).then_some((lat, lon, radius_nm))
+}
+
+/// Cover a box with as few circles as the radius cap allows.
+///
+/// A box larger than one circle is split in half along its longer side and each
+/// half retried, recursively, until every piece fits. That turns a silent
+/// under-fetch into more requests — which is visible, rate-limitable and
+/// correct — rather than a green poll covering a fraction of the area.
+///
+/// The recursion is bounded by [`MAX_TILES`]: an AOI of the whole planet would
+/// otherwise expand to hundreds of requests per cycle against a free community
+/// endpoint, which is a good way to be banned. Past that ceiling the caller is
+/// told, so the answer is "your AOI is too big for this provider" rather than a
+/// map that looks fine and is not.
+pub fn cover_bbox(bbox: BoundingBox) -> Result<Vec<(f64, f64, f64)>, CoverageTooLarge> {
+    let mut out = Vec::new();
+    let mut queue = vec![bbox];
+    while let Some(area) = queue.pop() {
+        if out.len() + queue.len() >= MAX_TILES {
+            return Err(CoverageTooLarge { tiles: MAX_TILES });
+        }
+        match bbox_to_center_radius(area) {
+            Some(circle) => out.push(circle),
+            None => {
+                let b = area.split_at_antimeridian()[0];
+                let (w, s, e, n) = (b.west, b.south, b.east, b.north);
+                // Split the longer side, measured on the ground rather than in
+                // degrees: a degree of longitude is a good deal shorter than a
+                // degree of latitude at these latitudes, and splitting by
+                // degrees would keep halving the wrong axis.
+                let mid_lat = (s + n) / 2.0;
+                let width_m = haversine_m(mid_lat, w, mid_lat, e);
+                let height_m = haversine_m(s, (w + e) / 2.0, n, (w + e) / 2.0);
+                if width_m >= height_m {
+                    let mid = (w + e) / 2.0;
+                    queue.push(BoundingBox::new(w, s, mid, n));
+                    queue.push(BoundingBox::new(mid, s, e, n));
+                } else {
+                    let mid = (s + n) / 2.0;
+                    queue.push(BoundingBox::new(w, s, e, mid));
+                    queue.push(BoundingBox::new(w, mid, e, n));
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// An area no reasonable number of radius queries will cover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CoverageTooLarge {
+    pub tiles: usize,
+}
+
+impl std::fmt::Display for CoverageTooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "this area needs more than {} radius queries to cover;              it is too large for a {MAX_RADIUS_NM:.0} nm endpoint — split the AOI,              or rely on the global sweep for coverage this wide",
+            self.tiles
+        )
+    }
 }
 
 #[async_trait::async_trait]
@@ -131,13 +223,37 @@ impl Source for ReadsbProvider {
 
     async fn poll(&self, ctx: &PollCtx) -> Result<Vec<Observation>, SourceError> {
         let bbox = ctx.bbox.unwrap_or(BoundingBox::GLOBAL);
-        let (lat, lon, radius_nm) = bbox_to_center_radius(bbox);
-        let url = format!(
-            "{}/lat/{lat:.5}/lon/{lon:.5}/dist/{radius_nm:.0}",
-            self.base_url
-        );
-        let feed: ReadsbFeed = self.http.get_json(&url).await?;
-        Ok(decode(feed, &self.descriptor.id, Utc::now()))
+        // Deliberately `Other`, which `is_retryable` excludes: an AOI too big
+        // for this endpoint is a configuration mistake, and retrying it every
+        // cadence would hide the message in a loop instead of surfacing it.
+        let circles = cover_bbox(bbox)
+            .map_err(|err| SourceError::Other(anyhow::anyhow!("{err}")))?;
+
+        let mut observations = Vec::new();
+        for (index, (lat, lon, radius_nm)) in circles.iter().enumerate() {
+            // Paced, not blasted. These are free community endpoints that allow
+            // roughly a request a second; firing an AOI's five tiles back to
+            // back inside one second reads as a burst and earns a 429, which
+            // the chain then answers by sidelining the provider for fifteen
+            // minutes — so an over-eager poll costs far more coverage than it
+            // buys. Measured the hard way: adding a British Isles AOI rate-
+            // limited both aggregators on the first cycle.
+            if index > 0 {
+                tokio::time::sleep(TILE_SPACING).await;
+            }
+            let url = format!(
+                "{}/lat/{lat:.5}/lon/{lon:.5}/dist/{radius_nm:.0}",
+                self.base_url
+            );
+            let feed: ReadsbFeed = self.http.get_json(&url).await?;
+            observations.extend(decode(feed, &self.descriptor.id, Utc::now()));
+        }
+        // One aircraft can sit in two overlapping circles. The store's dedupe
+        // would absorb it, but sending it twice inflates the accepted count and
+        // makes a poll look busier than it was.
+        observations.sort_by(|a, b| a.entity.key.cmp(&b.entity.key));
+        observations.dedup_by(|a, b| a.entity.key == b.entity.key);
+        Ok(observations)
     }
 }
 
@@ -607,7 +723,7 @@ mod tests {
         // A radius inscribing the box would silently miss aircraft in the
         // corners, so it must reach them.
         let bbox = BoundingBox::new(-1.0, 51.0, 0.5, 52.0);
-        let (lat, lon, radius_nm) = bbox_to_center_radius(bbox);
+        let (lat, lon, radius_nm) = bbox_to_center_radius(bbox).expect("one circle covers it");
         assert!((lat - 51.5).abs() < 1e-9);
         assert!((lon - -0.25).abs() < 1e-9);
         let corner_nm = haversine_m(lat, lon, 52.0, 0.5) / 1852.0;
@@ -617,12 +733,51 @@ mod tests {
         );
     }
 
+    /// The bug this replaces: `bbox_to_center_radius` used to clamp to
+    /// `MAX_RADIUS_NM` and hand back a circle regardless, and the old test here
+    /// asserted exactly that — so a box too large for one query produced a
+    /// successful poll covering a fraction of it, with nothing anywhere saying
+    /// so. An area that does not fit must now say it does not fit.
     #[test]
-    fn the_radius_is_capped_at_what_the_endpoints_accept() {
-        // A global box would ask for thousands of nautical miles and be
-        // rejected outright.
-        let (_, _, radius_nm) = bbox_to_center_radius(BoundingBox::GLOBAL);
-        assert!(radius_nm <= MAX_RADIUS_NM, "radius {radius_nm} exceeds the cap");
+    fn a_box_too_large_for_one_circle_is_refused_rather_than_truncated() {
+        assert!(
+            bbox_to_center_radius(BoundingBox::GLOBAL).is_none(),
+            "the planet does not fit in a 250 nm circle, and pretending it does              is how a map ends up quietly showing a tenth of what was asked for"
+        );
+    }
+
+    #[test]
+    fn a_large_area_is_covered_by_tiling_and_every_circle_is_legal() {
+        // The British Isles: far too wide for one query, entirely reasonable
+        // for a handful.
+        let bbox = BoundingBox::new(-11.0, 49.5, 2.0, 61.0);
+        let circles = cover_bbox(bbox).expect("the British Isles are coverable");
+        assert!(circles.len() > 1, "one circle cannot span this");
+        for (_, _, radius_nm) in &circles {
+            assert!(
+                *radius_nm <= MAX_RADIUS_NM,
+                "a tile asked for {radius_nm} nm, past what the endpoint accepts"
+            );
+        }
+
+        // Every corner of the box must fall inside some circle, or the tiling
+        // has the same hole the clamp did.
+        for (lon, lat) in [(-11.0, 49.5), (2.0, 49.5), (-11.0, 61.0), (2.0, 61.0)] {
+            let covered = circles.iter().any(|(clat, clon, r)| {
+                haversine_m(*clat, *clon, lat, lon) / 1852.0 <= *r + 1e-6
+            });
+            assert!(covered, "corner {lon},{lat} is not inside any circle");
+        }
+    }
+
+    #[test]
+    fn an_area_needing_absurdly_many_queries_is_refused() {
+        // A free community endpoint does not owe us the planet a circle at a
+        // time; better to say so than to hammer it.
+        assert_eq!(
+            cover_bbox(BoundingBox::GLOBAL).unwrap_err(),
+            CoverageTooLarge { tiles: MAX_TILES }
+        );
     }
 
     #[test]
