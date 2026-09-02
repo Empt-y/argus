@@ -1,6 +1,7 @@
 package org.argus.droid.ui
 
 import android.os.Build
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -471,4 +472,69 @@ private fun String.severityColour(): Color = when (this) {
     "warning" -> Color(0xFFF2994A)
     "notice" -> Color(0xFFF2C94C)
     else -> Color(0xFF9E9E9E)
+}
+
+/**
+ * Which basemap to draw the contacts on.
+ *
+ * The list is whatever the style document advertises, so adding a basemap to
+ * the daemon's config puts it on this sheet without an app release — the same
+ * property the layer rail has. "server default" is offered explicitly rather
+ * than being an absent option, because "I have not chosen" and "I chose the one
+ * that happens to be the default" behave differently when the default changes.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ThemeSheet(
+    offered: List<String>,
+    current: String?,
+    onPick: (String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Text("basemap", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.size(4.dp))
+            Text(
+                "Contacts are drawn in their layer's colour over whichever ground " +
+                    "you choose. A dark basemap is easiest to read them against.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.size(12.dp))
+
+            if (offered.isEmpty()) {
+                Text(
+                    "this server offers no alternatives",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            (listOf<String?>(null) + offered).forEach { name ->
+                val selected = name == current
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onPick(name) }
+                        .padding(vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        name ?: "server default",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (selected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurface,
+                    )
+                    if (selected) Text("in use", style = MaterialTheme.typography.labelSmall)
+                }
+                HorizontalDivider()
+            }
+        }
+    }
 }

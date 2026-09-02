@@ -175,12 +175,46 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 cesium_ion_token: config.client_keys.cesium_ion_token.clone(),
                 buildings_tileset_url: config.client.buildings_tileset_url.clone(),
             },
-            basemap: config.client.basemap_tiles_url.clone().map(|tiles_url| {
-                argus_api::Basemap {
-                    tiles_url,
-                    attribution: config.client.basemap_attribution.clone(),
-                }
-            }),
+            basemap: {
+                // A named default wins; otherwise the single legacy URL. Both
+                // spellings keep working, because a config that stops loading
+                // after an upgrade is a worse outcome than two ways to say the
+                // same thing.
+                let named = config
+                    .client
+                    .basemap
+                    .as_ref()
+                    .and_then(|name| config.client.basemaps.get(name))
+                    .map(|b| argus_api::Basemap {
+                        tiles_url: b.tiles_url.clone(),
+                        attribution: b.attribution.clone(),
+                        paint: basemap_paint(b),
+                    });
+                named.or_else(|| {
+                    config.client.basemap_tiles_url.clone().map(|tiles_url| {
+                        argus_api::Basemap {
+                            tiles_url,
+                            attribution: config.client.basemap_attribution.clone(),
+                            paint: argus_api::BasemapPaint::default(),
+                        }
+                    })
+                })
+            },
+            basemaps: config
+                .client
+                .basemaps
+                .iter()
+                .map(|(name, b)| {
+                    (
+                        name.clone(),
+                        argus_api::Basemap {
+                            tiles_url: b.tiles_url.clone(),
+                            attribution: b.attribution.clone(),
+                            paint: basemap_paint(b),
+                        },
+                    )
+                })
+                .collect(),
             public_url: config.server.public_url(),
         },
     );
@@ -298,6 +332,15 @@ fn warn_about_unreachable_pairing(bind: &str, public_url: &str) {
             %public_url,
             "bound beyond loopback but the pairing QR still says localhost, which on a phone              means the phone; set server.public_url"
         );
+    }
+}
+
+fn basemap_paint(b: &config::BasemapConfig) -> argus_api::BasemapPaint {
+    argus_api::BasemapPaint {
+        brightness_max: b.brightness_max,
+        brightness_min: b.brightness_min,
+        saturation: b.saturation,
+        contrast: b.contrast,
     }
 }
 

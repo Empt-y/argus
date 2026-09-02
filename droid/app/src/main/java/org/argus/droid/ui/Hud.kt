@@ -70,6 +70,7 @@ fun StatusBar(
     onSources: () -> Unit,
     onOffline: () -> Unit,
     onAlerts: () -> Unit,
+    onTheme: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val connection = state.connection
@@ -123,6 +124,10 @@ fun StatusBar(
                     onClick = onAlerts,
                     colour = if (state.unacknowledged > 0) Color(0xFFF2C94C) else null,
                 )
+            }
+            Spacer(Modifier.size(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                HudAction(state.basemap ?: "theme", onTheme)
             }
         }
     }

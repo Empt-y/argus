@@ -121,6 +121,25 @@ const fn default_max_connections() -> u32 {
     16
 }
 
+/// One named basemap a client may choose between.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BasemapConfig {
+    pub tiles_url: String,
+    #[serde(default)]
+    pub attribution: Option<String>,
+    /// Raster paint tuning, so a dark theme can be built from light tiles.
+    /// See [`argus_api::BasemapPaint`] for why that is the arrangement.
+    #[serde(default)]
+    pub brightness_max: Option<f64>,
+    #[serde(default)]
+    pub brightness_min: Option<f64>,
+    #[serde(default)]
+    pub saturation: Option<f64>,
+    #[serde(default)]
+    pub contrast: Option<f64>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureConfig {
@@ -211,6 +230,18 @@ pub struct ClientConfig {
     /// Required by most tile providers, and shown by the client verbatim.
     #[serde(default)]
     pub basemap_attribution: Option<String>,
+    /// Alternative basemaps a client may offer as a choice, by name.
+    ///
+    /// `basemap_tiles_url` above stays the default; these are the rest. A dark
+    /// basemap is the one that most changes how the map reads — the HUD is dark
+    /// and a bright pastel ground under it fights everything drawn on top —
+    /// which is why this exists at all rather than being a single fixed URL.
+    #[serde(default)]
+    pub basemaps: std::collections::BTreeMap<String, BasemapConfig>,
+    /// Which of [`Self::basemaps`] to use when a client expresses no
+    /// preference. Falls back to `basemap_tiles_url`.
+    #[serde(default)]
+    pub basemap: Option<String>,
     /// Prepared elevation grids, without extensions: the daemon reads
     /// `<path>.json` and `<path>.bin` for each. Built by
     /// `tools/terrain/prepare_terrain.py`.

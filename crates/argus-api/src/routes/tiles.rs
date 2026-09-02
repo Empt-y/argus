@@ -50,6 +50,10 @@ pub struct StyleQuery {
     /// live or absent, never stale.
     #[serde(default)]
     pub basemap_only: bool,
+    /// Which named basemap to put under the layers. Absent is the configured
+    /// default; an unknown name also falls back to it rather than erroring,
+    /// because a client holding a stale preference should get a map.
+    pub basemap: Option<String>,
 }
 
 /// `/v1/tiles/{z}/{x}/{y}.mvt` — every layer, or the ones named in `?layers=`.
@@ -199,7 +203,13 @@ pub async fn style(
     // The basemap goes in first so it is underneath everything: MapLibre draws
     // style layers in array order, and a ground that arrives last is a ground
     // painted over every contact on the map.
-    if let Some(basemap) = state.config.basemap.as_ref() {
+    let chosen = query
+        .basemap
+        .as_deref()
+        .and_then(|name| state.config.basemaps.get(name))
+        .or(state.config.basemap.as_ref());
+
+    if let Some(basemap) = chosen {
         sources.insert(
             "basemap".into(),
             json!({
@@ -210,10 +220,24 @@ pub async fn style(
                 "attribution": basemap.attribution.clone().unwrap_or_default(),
             }),
         );
+        let mut paint = serde_json::Map::new();
+        if let Some(v) = basemap.paint.brightness_max {
+            paint.insert("raster-brightness-max".into(), json!(v));
+        }
+        if let Some(v) = basemap.paint.brightness_min {
+            paint.insert("raster-brightness-min".into(), json!(v));
+        }
+        if let Some(v) = basemap.paint.saturation {
+            paint.insert("raster-saturation".into(), json!(v));
+        }
+        if let Some(v) = basemap.paint.contrast {
+            paint.insert("raster-contrast".into(), json!(v));
+        }
         style_layers.push(json!({
             "id": "basemap",
             "type": "raster",
             "source": "basemap",
+            "paint": paint,
         }));
     }
 
@@ -273,27 +297,74 @@ pub async fn style(
             }));
         }
         if matches!(style.geometry, GeometryClass::Point | GeometryClass::Mixed) {
+            // A glyph rather than a dot, named after the layer.
+            //
+            // The client draws and registers one image per layer, tinted with
+            // the colour this catalogue supplies, so a layer added to the
+            // daemon tomorrow gets a correctly-coloured contact without an app
+            // release — the same property the rest of this document has.
+            //
+            // `coalesce` is what keeps that safe. A symbol layer whose image is
+            // missing renders *nothing*, so a client that had not yet drawn
+            // this layer's glyph would show an empty map rather than an ugly
+            // one. Falling back to `argus-contact` — which every client
+            // registers once, unconditionally — turns that into a generic
+            // marker instead of a silent disappearance.
+            let rotation = if style.rotates_with_course {
+                // Course is the direction of travel, heading is where the nose
+                // points; they differ in a crosswind. Whichever the source
+                // actually measured is the one worth drawing, in that order,
+                // and 0 rather than null so an unrotatable contact still draws.
+                json!(["coalesce", ["get", "course_deg"], ["get", "heading_deg"], 0])
+            } else {
+                json!(0)
+            };
+
             style_layers.push(json!({
                 "id": format!("{id}-point"),
-                "type": "circle",
+                "type": "symbol",
                 "source": id,
                 "source-layer": id,
                 "filter": ["==", ["geometry-type"], "Point"],
-                "paint": {
-                    "circle-color": style.color,
-                    "circle-radius": 4.0,
-                    // Modeled and estimated positions are drawn hollow. The
-                    // rule that a client must never present a propagated
-                    // satellite as an observed one has to survive into the
-                    // style, or it survives nowhere.
-                    "circle-opacity": [
-                        "match", ["get", "quality"],
-                        "live", 0.9,
-                        "delayed", 0.7,
-                        0.35
+                "layout": {
+                    "icon-image": [
+                        "coalesce", ["image", id], ["image", "argus-contact"]
                     ],
-                    "circle-stroke-color": style.color,
-                    "circle-stroke-width": 1.0,
+                    // Scaled by zoom rather than fixed. At a constant size the
+                    // glyphs are either unreadable dots across a continent or,
+                    // at the size that reads well there, a solid mass of
+                    // overlapping chevrons over an airport — the first attempt
+                    // rendered Heathrow as an unreadable blob. Small when the
+                    // view is wide, legible when it is close.
+                    "icon-size": [
+                        "interpolate", ["linear"], ["zoom"],
+                        3, 0.3,
+                        7, 0.42,
+                        11, 0.62,
+                        15, 0.85
+                    ],
+                    // Contacts overlap constantly around an airport, and a
+                    // decluttered map that hides half the approach is worse
+                    // than a busy one that shows it.
+                    "icon-allow-overlap": true,
+                    "icon-ignore-placement": true,
+                    // Rotate with the map, not the screen: a heading is a
+                    // bearing on the ground, and keeping it screen-aligned
+                    // would make every contact lie as soon as the map turned.
+                    "icon-rotation-alignment": "map",
+                    "icon-rotate": rotation,
+                },
+                "paint": {
+                    // Modeled and estimated positions are drawn faint. The rule
+                    // that a client must never present a propagated satellite
+                    // as an observed one has to survive into the style, or it
+                    // survives nowhere.
+                    "icon-opacity": [
+                        "match", ["get", "quality"],
+                        "live", 1.0,
+                        "delayed", 0.75,
+                        0.4
+                    ],
                 },
             }));
         }
@@ -317,6 +388,11 @@ pub async fn style(
             // remember which URL it asked for.
             "metadata": {
                 "argus:at": at.map(|t| t.to_rfc3339_opts(SecondsFormat::Millis, true)),
+                // The basemaps on offer, so a client can present the choice
+                // without a second endpoint or a hard-coded list — the same
+                // reasoning that puts the layer catalogue on the server.
+                "argus:basemaps": state.config.basemaps.keys().collect::<Vec<_>>(),
+                "argus:basemap": query.basemap,
             },
             "sources": sources,
             "layers": style_layers,

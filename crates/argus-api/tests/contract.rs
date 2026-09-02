@@ -77,7 +77,20 @@ async fn state(auth: AuthMode) -> Option<(ApiState, tokio::sync::MutexGuard<'sta
                 basemap: Some(argus_api::Basemap {
                     tiles_url: "https://tiles.test/{z}/{x}/{y}.png".into(),
                     attribution: Some("© Test".into()),
+                    paint: argus_api::BasemapPaint::default(),
                 }),
+                basemaps: std::collections::BTreeMap::from([(
+                    "night".to_string(),
+                    argus_api::Basemap {
+                        tiles_url: "https://tiles.test/night/{z}/{x}/{y}.png".into(),
+                        attribution: Some("© Test".into()),
+                        paint: argus_api::BasemapPaint {
+                            brightness_max: Some(0.3),
+                            saturation: Some(-0.7),
+                            ..Default::default()
+                        },
+                    },
+                )]),
                 ..ApiConfig::default()
             },
         ),
@@ -1087,6 +1100,49 @@ async fn a_style_asked_for_a_past_instant_bakes_it_into_every_tile_url() {
     assert_eq!(
         live_headers.get(axum::http::header::CACHE_CONTROL).unwrap(),
         "no-store"
+    );
+}
+
+/// A named basemap is selectable, and an unknown one falls back rather than
+/// failing.
+///
+/// The fallback matters because the choice is persisted on the client: a phone
+/// holding a preference for a basemap the operator has since renamed should get
+/// a map, not an error page where the ground used to be.
+#[tokio::test]
+async fn a_basemap_can_be_chosen_by_name_and_an_unknown_one_falls_back() {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let (status, body) = get(&state, "/v1/style.json?basemap=night", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    let style = json(&body);
+    assert_eq!(
+        style["sources"]["basemap"]["tiles"][0],
+        "https://tiles.test/night/{z}/{x}/{y}.png"
+    );
+    // Paint tuning is how a dark theme is built from light tiles, so it has to
+    // survive into the style rather than being a client-side convention.
+    let paint = &style["layers"][0]["paint"];
+    assert_eq!(paint["raster-brightness-max"], 0.3);
+    assert_eq!(paint["raster-saturation"], -0.7);
+
+    // The names on offer travel with the document, so a client needs no second
+    // endpoint and no hard-coded list.
+    let offered: Vec<&str> = style["metadata"]["argus:basemaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(offered, ["night"]);
+
+    let (status, body) = get(&state, "/v1/style.json?basemap=gone", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK, "an unknown name is not an error");
+    assert_eq!(
+        json(&body)["sources"]["basemap"]["tiles"][0],
+        "https://tiles.test/{z}/{x}/{y}.png",
+        "it falls back to the configured default"
     );
 }
 

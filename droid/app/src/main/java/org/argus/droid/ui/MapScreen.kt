@@ -49,6 +49,7 @@ fun MapScreen(
     var showSources by remember { mutableStateOf(false) }
     var showOffline by remember { mutableStateOf(false) }
     var showAlerts by remember { mutableStateOf(false) }
+    var showTheme by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.startPolling() }
     LaunchedEffect(pairLink) { if (pairLink != null) showPairing = true }
@@ -77,6 +78,14 @@ fun MapScreen(
         val loaded = map ?: return@LaunchedEffect
         style = null
         loaded.setStyle(state.styleUrl) { newStyle ->
+            // The style says which basemaps exist, so the picker needs no
+            // second endpoint and no hard-coded list — the same arrangement
+            // that lets a new layer reach the phone without an app release.
+            vm.noteBasemapsOffered(basemapsFrom(newStyle.json))
+            // Images first: a symbol layer whose icon is not registered draws
+            // nothing at all, so the glyphs have to exist before the style is
+            // handed on to anything that might render it.
+            Sprites.install(newStyle, state.layers)
             newStyle.installTrackLayers()
             style = newStyle
         }
@@ -84,6 +93,15 @@ fun MapScreen(
 
     // Visibility is re-applied whenever either side of it moves: the user's
     // choices, or a style that has just been replaced and knows nothing of them.
+    LaunchedEffect(style, state.layers) {
+        // The layer catalogue and the style load independently, so whichever
+        // lands second has to fill in what the first could not: a style loaded
+        // before `/v1/layers` answered has no per-layer glyphs and would draw
+        // every contact with the fallback marker.
+        val current = style ?: return@LaunchedEffect
+        if (state.layers.isNotEmpty()) Sprites.install(current, state.layers)
+    }
+
     LaunchedEffect(style, state.hidden, state.layers) {
         val current = style ?: return@LaunchedEffect
         state.layers.forEach { layer ->
@@ -115,6 +133,7 @@ fun MapScreen(
             onSources = { showSources = true },
             onOffline = { vm.refreshRegions(); showOffline = true },
             onAlerts = { showAlerts = true },
+            onTheme = { showTheme = true },
             modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
         )
 
@@ -166,6 +185,15 @@ fun MapScreen(
         SourceSheet(sources = state.sources, onDismiss = { showSources = false })
     }
 
+    if (showTheme) {
+        ThemeSheet(
+            offered = state.basemapsOffered,
+            current = state.basemap,
+            onPick = { vm.setBasemap(it); showTheme = false },
+            onDismiss = { showTheme = false },
+        )
+    }
+
     if (showAlerts) {
         AlertSheet(
             alerts = state.alerts,
@@ -198,3 +226,17 @@ fun MapScreen(
         )
     }
 }
+
+/**
+ * The basemap names a style document offers.
+ *
+ * Parsed from the raw JSON because MapLibre's `Style` exposes no accessor for
+ * `metadata`. Failing quietly to an empty list is right: the picker simply has
+ * nothing to offer against a server too old to advertise any.
+ */
+private fun basemapsFrom(styleJson: String): List<String> = runCatching {
+    val metadata = org.json.JSONObject(styleJson).optJSONObject("metadata")
+        ?: return emptyList()
+    val names = metadata.optJSONArray("argus:basemaps") ?: return emptyList()
+    (0 until names.length()).mapNotNull { names.optString(it).takeIf(String::isNotBlank) }
+}.getOrDefault(emptyList())

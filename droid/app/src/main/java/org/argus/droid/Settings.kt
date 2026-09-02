@@ -38,6 +38,21 @@ class Settings private constructor(context: Context) {
     /** Which device this token belongs to, so it can be named when revoking. */
     val deviceId: String? get() = prefs.getString(KEY_DEVICE_ID, null)
 
+    /**
+     * The basemap the user picked, or null for whatever the server defaults to.
+     *
+     * Stored by *name* rather than by URL or position: the server owns the list,
+     * and a remembered index would silently come to mean a different map the
+     * next time the config changed.
+     */
+    private val _basemap = MutableStateFlow(prefs.getString(KEY_BASEMAP, null))
+    val basemap: StateFlow<String?> = _basemap.asStateFlow()
+
+    fun setBasemap(name: String?) {
+        prefs.edit().apply { if (name == null) remove(KEY_BASEMAP) else putString(KEY_BASEMAP, name) }.apply()
+        _basemap.value = name
+    }
+
     fun setBaseUrl(url: String) {
         val cleaned = url.trim().trimEnd('/')
         if (cleaned.isEmpty() || cleaned == _baseUrl.value) return
@@ -69,6 +84,7 @@ class Settings private constructor(context: Context) {
         private const val KEY_BASE_URL = "base_url"
         private const val KEY_TOKEN = "token"
         private const val KEY_DEVICE_ID = "device_id"
+        private const val KEY_BASEMAP = "basemap"
 
         @Volatile
         private var instance: Settings? = null

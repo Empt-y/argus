@@ -85,6 +85,9 @@ data class UiState(
      *  whenever it must be re-applied even though the string did not. */
     val styleUrl: String = "",
     val styleNonce: Int = 0,
+    /** The basemap in use, and the names the server says it offers. */
+    val basemap: String? = null,
+    val basemapsOffered: List<String> = emptyList(),
 ) {
     val live: Boolean get() = at == null
     val unacknowledged: Int get() = alerts.count { it.acknowledgedAt == null }
@@ -99,7 +102,8 @@ class ArgusViewModel(app: Application) : AndroidViewModel(app) {
         UiState(
             baseUrl = settings.baseUrl.value,
             paired = settings.token.value != null,
-            styleUrl = client.styleUrl(null),
+            basemap = settings.basemap.value,
+            styleUrl = client.styleUrl(null, settings.basemap.value),
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -165,11 +169,23 @@ class ArgusViewModel(app: Application) : AndroidViewModel(app) {
                 val geofences = client.geofences()
                 val alerts = client.alerts()
                 _state.update {
+                    // The catalogue arriving for the first time has to re-load
+                    // the style, not merely repaint. MapLibre resolves an
+                    // `image` expression when it lays a symbol out, so glyphs
+                    // registered after that has happened do not appear until
+                    // something forces a re-layout — the map sat there drawing
+                    // every contact with the fallback marker.
+                    //
+                    // The style URL has not changed, so only the nonce can say
+                    // "load this again", which is exactly what it is for.
+                    val catalogueJustArrived = it.layers.isEmpty() && layers.isNotEmpty()
                     it.copy(
                         layers = layers,
                         sources = sources,
                         geofences = geofences,
                         alerts = alerts,
+                        styleNonce = if (catalogueJustArrived) it.styleNonce + 1
+                        else it.styleNonce,
                     )
                 }
             } catch (err: ApiException) {
@@ -195,7 +211,7 @@ class ArgusViewModel(app: Application) : AndroidViewModel(app) {
                 layers = emptyList(),
                 sources = emptyList(),
                 selection = null,
-                styleUrl = client.styleUrl(it.at),
+                styleUrl = client.styleUrl(it.at, it.basemap),
                 styleNonce = it.styleNonce + 1,
             )
         }
@@ -213,7 +229,7 @@ class ArgusViewModel(app: Application) : AndroidViewModel(app) {
                     it.copy(
                         baseUrl = settings.baseUrl.value,
                         paired = true,
-                        styleUrl = client.styleUrl(it.at),
+                        styleUrl = client.styleUrl(it.at, it.basemap),
                         // The style itself is unauthenticated no longer: it has
                         // to be fetched again with the token attached, and the
                         // URL has not changed, so only the nonce can say so.
@@ -232,6 +248,26 @@ class ArgusViewModel(app: Application) : AndroidViewModel(app) {
         settings.clearToken()
         _state.update { it.copy(paired = false, styleNonce = it.styleNonce + 1) }
         refreshCatalogue()
+    }
+
+    /**
+     * Switch basemap. Persisted, and applied by reloading the style — the whole
+     * visual state of the map is that one URL.
+     */
+    fun setBasemap(name: String?) {
+        settings.setBasemap(name)
+        _state.update {
+            it.copy(
+                basemap = name,
+                styleUrl = client.styleUrl(it.at, name),
+                styleNonce = it.styleNonce + 1,
+            )
+        }
+    }
+
+    /** What the style document said it could offer, learnt when it loaded. */
+    fun noteBasemapsOffered(names: List<String>) {
+        _state.update { if (it.basemapsOffered == names) it else it.copy(basemapsOffered = names) }
     }
 
     fun toggleLayer(layerId: String) {
@@ -253,7 +289,11 @@ class ArgusViewModel(app: Application) : AndroidViewModel(app) {
     fun seek(at: Instant?) {
         _state.update {
             if (it.at == at) return@update it
-            it.copy(at = at, styleUrl = client.styleUrl(at), styleNonce = it.styleNonce + 1)
+            it.copy(
+                at = at,
+                styleUrl = client.styleUrl(at, it.basemap),
+                styleNonce = it.styleNonce + 1,
+            )
         }
         // A track drawn at a past instant must not run on past it.
         _state.value.selection?.let { select(it.tapped) }

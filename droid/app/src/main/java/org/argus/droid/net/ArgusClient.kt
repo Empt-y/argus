@@ -45,9 +45,22 @@ class ArgusClient(private val settings: Settings) {
 
     private val base: String get() = settings.baseUrl.value
 
-    fun styleUrl(at: Instant?): String =
-        if (at == null) "$base/v1/style.json"
-        else "$base/v1/style.json?at=${INSTANT.format(at)}"
+    /**
+     * The style to display: an instant if the DVR is rewound, and the chosen
+     * basemap if there is one.
+     *
+     * Both are query parameters on one document, so the whole visual state of
+     * the map is a single URL — which is what makes changing either of them one
+     * `setStyle` call rather than a pile of in-place edits.
+     */
+    fun styleUrl(at: Instant?, basemap: String? = null): String {
+        val params = buildList {
+            if (at != null) add("at=${INSTANT.format(at)}")
+            if (!basemap.isNullOrBlank()) add("basemap=$basemap")
+        }
+        return if (params.isEmpty()) "$base/v1/style.json"
+        else "$base/v1/style.json?${params.joinToString("&")}"
+    }
 
     /**
      * Ground with nothing on it — what an offline region is cut from.

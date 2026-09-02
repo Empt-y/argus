@@ -39,6 +39,29 @@ pub struct ClientKeys {
 pub struct Basemap {
     pub tiles_url: String,
     pub attribution: Option<String>,
+    /// Raster paint adjustments applied to the tiles by the client.
+    ///
+    /// This is how a dark theme is built without a second tile provider. The
+    /// keyless raster basemaps that actually exist are all light — CARTO's dark
+    /// style now stamps "API KEY REQUIRED" across every tile, which a status
+    /// code will not tell you — so the honest way to get dark ground is to take
+    /// OpenStreetMap's own tiles and let MapLibre dim them. Not as good as a
+    /// purpose-drawn dark style, and it depends on nobody's goodwill but the
+    /// one provider already being credited.
+    pub paint: BasemapPaint,
+}
+
+/// Raster paint tuning, in MapLibre's own units. `None` leaves the default.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct BasemapPaint {
+    /// 0..1. Lowering the ceiling is what actually darkens a tile.
+    pub brightness_max: Option<f64>,
+    pub brightness_min: Option<f64>,
+    /// -1..1. Negative drains colour, which stops a busy basemap competing
+    /// with contacts drawn in saturated layer colours.
+    pub saturation: Option<f64>,
+    /// -1..1.
+    pub contrast: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,7 +71,16 @@ pub struct ApiConfig {
     pub allowed_origins: Vec<String>,
     pub client_keys: ClientKeys,
     /// Raster basemap for clients that draw only what the style contains.
+    ///
+    /// The one used when the client asks for no particular basemap.
     pub basemap: Option<Basemap>,
+    /// Every basemap on offer, by name, for clients that let a person choose.
+    ///
+    /// Named rather than a bare list because the choice has to survive being
+    /// written down: the Android client stores which one the user picked and
+    /// asks for it by name on every style load, and a positional index would
+    /// silently mean something else the moment the config changed.
+    pub basemaps: std::collections::BTreeMap<String, Basemap>,
     /// How this server is reachable, used to build tile URLs in the style
     /// document and the pairing URL in the QR. A phone cannot use
     /// `127.0.0.1`, so this must be the LAN or Tailscale address rather than
@@ -63,6 +95,7 @@ impl Default for ApiConfig {
             allowed_origins: Vec::new(),
             client_keys: ClientKeys::default(),
             basemap: None,
+            basemaps: std::collections::BTreeMap::new(),
             public_url: "http://127.0.0.1:8787".into(),
         }
     }
