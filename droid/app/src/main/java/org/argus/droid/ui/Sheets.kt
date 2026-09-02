@@ -32,6 +32,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.serialization.json.JsonPrimitive
 import org.argus.droid.Selection
+import org.argus.droid.net.Alert
+import org.argus.droid.net.GeofenceView
 import org.argus.droid.net.SourceRow
 import java.time.Instant
 import kotlin.math.roundToInt
@@ -349,4 +351,105 @@ fun PairingSheet(
             }
         }
     }
+}
+
+/**
+ * What the geofences have caught, newest first.
+ *
+ * Acknowledging is a server-side act rather than a local dismissal: an alert
+ * dealt with on the phone should not reappear on the tablet an hour later as
+ * though it were news, and `alerts.acknowledged_at` is what makes that true for
+ * every client at once.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AlertSheet(
+    alerts: List<Alert>,
+    geofences: List<GeofenceView>,
+    onAcknowledge: (Long) -> Unit,
+    onDismiss: () -> Unit,
+    onGoTo: (Double, Double) -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp)
+                .heightIn(max = 540.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Text("alerts", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.size(4.dp))
+            Text(
+                if (geofences.isEmpty()) {
+                    "No geofences are armed. Draw one with POST /v1/geofences and " +
+                        "it appears on the map within thirty seconds."
+                } else {
+                    geofences.joinToString(", ") { it.name } +
+                        " · ${geofences.count { it.enabled }} armed"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Spacer(Modifier.size(12.dp))
+            if (alerts.isEmpty()) {
+                Text(
+                    "nothing has fired",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            alerts.forEach { alert ->
+                val acked = alert.acknowledgedAt != null
+                Column(Modifier.padding(vertical = 6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                alert.message,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (acked) MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                buildString {
+                                    append(
+                                        runCatching { STAMP.format(Instant.parse(alert.firedAt)) }
+                                            .getOrDefault(alert.firedAt)
+                                    )
+                                    append(" · ")
+                                    append(alert.severity)
+                                    alert.attrs["alt_m"]?.let { append(" · ${it}m") }
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = alert.severity.severityColour(),
+                            )
+                        }
+                        if (!acked) {
+                            TextButton(onClick = { onAcknowledge(alert.alertId) }) { Text("ack") }
+                        }
+                    }
+                    if (alert.lat != null && alert.lon != null) {
+                        TextButton(onClick = { onGoTo(alert.lat, alert.lon) }) {
+                            Text("show where", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+                HorizontalDivider()
+            }
+        }
+    }
+}
+
+private fun String.severityColour(): Color = when (this) {
+    "critical" -> Color(0xFFEB5757)
+    "warning" -> Color(0xFFF2994A)
+    "notice" -> Color(0xFFF2C94C)
+    else -> Color(0xFF9E9E9E)
 }

@@ -48,6 +48,7 @@ fun MapScreen(
     var showPairing by remember { mutableStateOf(false) }
     var showSources by remember { mutableStateOf(false) }
     var showOffline by remember { mutableStateOf(false) }
+    var showAlerts by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.startPolling() }
     LaunchedEffect(pairLink) { if (pairLink != null) showPairing = true }
@@ -94,6 +95,10 @@ fun MapScreen(
         style?.showTrack(state.selection?.track.orEmpty())
     }
 
+    LaunchedEffect(style, state.geofences) {
+        style?.showGeofences(state.geofences)
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         // The map goes edge to edge — it is a map, and a bezel of chrome around
         // it is wasted glass. The overlays do not: with targetSdk 35 the system
@@ -109,6 +114,7 @@ fun MapScreen(
             onPair = { showPairing = true },
             onSources = { showSources = true },
             onOffline = { vm.refreshRegions(); showOffline = true },
+            onAlerts = { showAlerts = true },
             modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
         )
 
@@ -158,6 +164,21 @@ fun MapScreen(
 
     if (showSources) {
         SourceSheet(sources = state.sources, onDismiss = { showSources = false })
+    }
+
+    if (showAlerts) {
+        AlertSheet(
+            alerts = state.alerts,
+            geofences = state.geofences,
+            onAcknowledge = vm::acknowledgeAlert,
+            onDismiss = { showAlerts = false },
+            onGoTo = { lat, lon ->
+                map?.cameraPosition = CameraPosition.Builder()
+                    .target(LatLng(lat, lon))
+                    .zoom(maxOf(map?.cameraPosition?.zoom ?: 8.0, 11.0))
+                    .build()
+            },
+        )
     }
 
     if (showOffline) {

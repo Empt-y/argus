@@ -1,10 +1,14 @@
 package org.argus.droid
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -26,6 +30,13 @@ class MainActivity : ComponentActivity() {
     private val vm: ArgusViewModel by viewModels()
     private var pairLink by mutableStateOf<PairLink?>(null)
 
+    /** Start watching either way: a refused permission means silent alerts,
+     *  not no alerts — they still reach the list in the app. */
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            AlertService.start(this)
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -44,6 +55,19 @@ class MainActivity : ComponentActivity() {
         HttpRequestUtil.setOkHttpClient(vm.client.http)
 
         handleDeepLink(intent)
+
+        // Asked for before the service starts, because a foreground service
+        // whose notifications are blocked is a process holding a socket open to
+        // no purpose. Declined is a legitimate answer — the map still works and
+        // the alerts sheet still lists what fired.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            AlertService.start(this)
+        }
 
         setContent {
             MaterialTheme(colorScheme = ARGUS_DARK) {

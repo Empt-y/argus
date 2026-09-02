@@ -121,3 +121,19 @@ data class PairResponse(
     val token: String,
     val scopes: List<String> = emptyList(),
 )
+
+@Serializable
+data class GeofenceView(
+    @SerialName("geofence_id") val geofenceId: Long,
+    val name: String,
+    /** GeoJSON geometry, ready to hand to a map. */
+    val geometry: JsonElement,
+    val rule: JsonObject = JsonObject(emptyMap()),
+    val enabled: Boolean = true,
+)
+
+@Serializable
+data class GeofencesResponse(val geofences: List<GeofenceView> = emptyList())
+
+@Serializable
+data class AlertsResponse(val alerts: List<Alert> = emptyList())

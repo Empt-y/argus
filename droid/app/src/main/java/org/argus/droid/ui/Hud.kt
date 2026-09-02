@@ -69,6 +69,7 @@ fun StatusBar(
     onPair: () -> Unit,
     onSources: () -> Unit,
     onOffline: () -> Unit,
+    onAlerts: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val connection = state.connection
@@ -113,16 +114,25 @@ fun StatusBar(
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 HudAction("sources", onSources)
                 HudAction("offline", onOffline)
+                // The count is the point of the entry: an alert nobody has
+                // looked at is the only thing on this panel that is waiting for
+                // a person rather than reporting a state.
+                HudAction(
+                    label = if (state.unacknowledged > 0) "alerts ${state.unacknowledged}"
+                    else "alerts",
+                    onClick = onAlerts,
+                    colour = if (state.unacknowledged > 0) Color(0xFFF2C94C) else null,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun HudAction(label: String, onClick: () -> Unit) {
+private fun HudAction(label: String, onClick: () -> Unit, colour: Color? = null) {
     Text(
         text = label,
-        color = Color(0xFF56CCF2),
+        color = colour ?: Color(0xFF56CCF2),
         style = MaterialTheme.typography.labelSmall,
         modifier = Modifier.clickable(onClick = onClick),
     )

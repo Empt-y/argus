@@ -16,11 +16,15 @@ import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.Layer
+import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.sources.GeoJsonSource
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import org.maplibre.geojson.Feature
+import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
 import java.time.Instant
@@ -28,7 +32,14 @@ import java.time.Instant
 /** Ids the app owns in the style. Everything else came from the server. */
 const val TRACK_SOURCE = "argus-track"
 const val TRACK_LINE = "argus-track-line"
+const val FENCE_SOURCE = "argus-geofences"
+const val FENCE_FILL = "argus-geofence-fill"
+const val FENCE_LINE = "argus-geofence-line"
 const val BASEMAP_LAYER = "basemap"
+
+/** Geofences are drawn in one colour, not the layer palette: they are the
+ *  user's own annotation on the map rather than something Argus collected. */
+private const val FENCE_COLOUR = Color.CYAN
 
 /**
  * A [MapView] that follows the composition's lifecycle.
@@ -95,6 +106,27 @@ fun Style.setBasemapVisible(visible: Boolean) {
  */
 fun Style.installTrackLayers() {
     if (getSource(TRACK_SOURCE) != null) return
+
+    // Geofences go in first so they sit under the track and under the contacts:
+    // a fence is context for what is moving through it, and a translucent slab
+    // painted over the aircraft it is about would be exactly backwards.
+    addSource(GeoJsonSource(FENCE_SOURCE))
+    addLayer(
+        FillLayer(FENCE_FILL, FENCE_SOURCE).withProperties(
+            PropertyFactory.fillColor(FENCE_COLOUR),
+            PropertyFactory.fillOpacity(0.12f),
+        )
+    )
+    addLayer(
+        LineLayer(FENCE_LINE, FENCE_SOURCE).withProperties(
+            PropertyFactory.lineColor(FENCE_COLOUR),
+            PropertyFactory.lineWidth(1.5f),
+            // Dashed, so a fence is never mistaken for a coastline or an
+            // airspace boundary the basemap drew.
+            PropertyFactory.lineDasharray(arrayOf(3f, 2f)),
+        )
+    )
+
     addSource(GeoJsonSource(TRACK_SOURCE))
     addLayer(
         LineLayer(TRACK_LINE, TRACK_SOURCE).withProperties(
@@ -127,6 +159,33 @@ fun Style.showTrack(points: List<TrackPoint>) {
     } else {
         source.setGeoJson(Feature.fromGeometry(LineString.fromLngLats(coordinates)))
     }
+}
+
+/**
+ * Draw the armed geofences, or clear them.
+ *
+ * Only the enabled ones: a disarmed fence still exists and still owns its
+ * history, but drawing it would say the map is watching a box it is not.
+ */
+fun Style.showGeofences(fences: List<org.argus.droid.net.GeofenceView>) {
+    val source = getSourceAs<GeoJsonSource>(FENCE_SOURCE) ?: return
+    val features = fences
+        .filter { it.enabled }
+        .mapNotNull { fence ->
+            runCatching {
+                Feature.fromJson(
+                    buildJsonObject {
+                        put("type", JsonPrimitive("Feature"))
+                        put("geometry", fence.geometry)
+                        put(
+                            "properties",
+                            buildJsonObject { put("name", JsonPrimitive(fence.name)) },
+                        )
+                    }.toString()
+                )
+            }.getOrNull()
+        }
+    source.setGeoJson(FeatureCollection.fromFeatures(features))
 }
 
 /**

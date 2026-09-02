@@ -82,6 +82,20 @@ class ArgusClient(private val settings: Settings) {
         )
     }
 
+    suspend fun geofences(): List<GeofenceView> =
+        get<GeofencesResponse>("/v1/geofences").geofences
+
+    suspend fun alerts(limit: Int = 100): List<Alert> =
+        get<AlertsResponse>("/v1/alerts?limit=$limit").alerts
+
+    suspend fun acknowledgeAlert(alertId: Long) = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("$base/v1/alerts/$alertId/ack")
+            .post("".toRequestBody(null))
+            .build()
+        http.newCall(request).execute().use { it.bodyOrThrow() }
+    }
+
     /**
      * Redeem a pairing code for this device's bearer token.
      *

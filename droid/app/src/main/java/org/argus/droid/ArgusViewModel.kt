@@ -1,6 +1,7 @@
 package org.argus.droid
 
 import android.app.Application
+import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
@@ -10,9 +11,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.argus.droid.net.Alert
 import org.argus.droid.net.ApiException
 import org.argus.droid.net.ArgusClient
 import org.argus.droid.net.EntityRow
+import org.argus.droid.net.GeofenceView
 import org.argus.droid.net.LayerView
 import org.argus.droid.net.SourceRow
 import org.argus.droid.net.TrackPoint
@@ -72,6 +75,9 @@ data class UiState(
     /** The instant the map is showing. `null` is live. */
     val at: Instant? = null,
     val selection: Selection? = null,
+    /** Armed geofences, drawn on the map, and the alerts they have raised. */
+    val geofences: List<GeofenceView> = emptyList(),
+    val alerts: List<Alert> = emptyList(),
     /** Basemap areas already on this device, and the download in flight. */
     val regions: List<StoredRegion> = emptyList(),
     val download: DownloadProgress? = null,
@@ -81,6 +87,7 @@ data class UiState(
     val styleNonce: Int = 0,
 ) {
     val live: Boolean get() = at == null
+    val unacknowledged: Int get() = alerts.count { it.acknowledgedAt == null }
 }
 
 class ArgusViewModel(app: Application) : AndroidViewModel(app) {
@@ -152,7 +159,19 @@ class ArgusViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val layers = client.layers()
                 val sources = client.sources()
-                _state.update { it.copy(layers = layers, sources = sources) }
+                // Fetched on the same cadence as the catalogue rather than on
+                // their own timer: the map's fences and the rail's health are
+                // the same kind of fact — what the server is currently doing.
+                val geofences = client.geofences()
+                val alerts = client.alerts()
+                _state.update {
+                    it.copy(
+                        layers = layers,
+                        sources = sources,
+                        geofences = geofences,
+                        alerts = alerts,
+                    )
+                }
             } catch (err: ApiException) {
                 if (err.code == 401 || err.code == 403) {
                     _state.update { it.copy(connection = Connection.Unauthorized) }
@@ -259,6 +278,20 @@ class ArgusViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 )
             }
+        }
+    }
+
+    fun acknowledgeAlert(alertId: Long) {
+        viewModelScope.launch {
+            runCatching { client.acknowledgeAlert(alertId) }
+            // The notification is keyed by alert id, so it can be withdrawn
+            // exactly. Without this, acknowledging in the app left the banner
+            // sitting in the shade — the user had dealt with it in one place
+            // and was still being told about it in another, which is the
+            // quickest way to teach someone to swipe the whole app away.
+            NotificationManagerCompat.from(getApplication())
+                .cancel(alertId.toInt())
+            refreshCatalogue()
         }
     }
 
