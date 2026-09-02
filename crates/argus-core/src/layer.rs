@@ -111,6 +111,14 @@ static OVERRIDES: &[(&str, Override)] = &[
     ("flights", |s| {
         s.max_zoom = 14;
     }),
+    ("radiosondes", |s| {
+        // Aircraft-coloured by default, which would make a balloon
+        // indistinguishable from an airliner. Cyan, and visible from further
+        // out than aircraft: there are only ever a few dozen airborne, so they
+        // cost nothing at low zoom and are easy to lose if hidden until z4.
+        s.color = "#56ccf2".into();
+        s.min_zoom = 2;
+    }),
 ];
 
 #[cfg(test)]

@@ -516,5 +516,15 @@ fn build_sources(
         )));
     }
 
+    // Radiosondes. Their own layer rather than joining `flights`: both are
+    // EntityKind::Aircraft and reuse the same track machinery, but a weather
+    // balloon and an airliner are different things to switch on and off, and
+    // the layer is the unit a client toggles.
+    if enabled("radiosondes") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::SondeHub::new(
+            http.clone(),
+        )));
+    }
+
     sources
 }
