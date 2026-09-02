@@ -22,7 +22,15 @@ async fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_env("ARGUS_LOG")
-                .unwrap_or_else(|_| "argusd=info,argus_store=info,argus_ingest=info".into()),
+                // Every crate that runs a loop of its own belongs here. The
+                // geofence engine was added and left out, which meant a
+                // subsystem whose whole job is to say something said nothing —
+                // indistinguishable from not running at all.
+                .unwrap_or_else(|_| {
+                    "argusd=info,argus_store=info,argus_ingest=info,\
+                     argus_alert=info,argus_api=info"
+                        .into()
+                }),
         )
         .init();
 
@@ -94,6 +102,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // a shared cookie jar lets one host's state follow requests to another.
     let session_http = argus_ingest::HttpClient::with_session(std::time::Duration::from_secs(30))?;
     let api_store = store.clone();
+    let alert_store = store.clone();
     let runtime = argus_ingest::Runtime::new(
         store,
         argus_ingest::SchedulerConfig {
@@ -220,6 +229,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         public_url = %config.server.public_url(),
         "api listening"
     );
+    warn_about_unreachable_pairing(&config.server.bind, &config.server.public_url());
     let api_cancel = runtime.cancel_token();
     let api = tokio::spawn(async move {
         axum::serve(
@@ -231,15 +241,64 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .await
     });
 
-    tracing::info!("argusd startup complete; ingest and api running");
+    // The geofence engine is a third peer, not a passenger on either of the
+    // other two: it must keep watching whether or not a client is connected —
+    // an alert nobody was there to receive is exactly the one the replay
+    // machinery exists to deliver later.
+    let alert_cancel = runtime.cancel_token();
+    let alerts = tokio::spawn(
+        argus_alert::Engine::new(alert_store).run(alert_cancel),
+    );
+
+    tracing::info!("argusd startup complete; ingest, alerts and api running");
     runtime
         .run(&credentials, budget, config.capture.disk_warn_fraction)
         .await?;
-    tracing::info!("ingest stopped; draining api");
+    tracing::info!("ingest stopped; draining api and alerts");
+    if let Err(err) = alerts.await {
+        tracing::warn!("geofence engine did not stop cleanly: {err}");
+    }
     // The cancel token the API shut down on is the same one ingest stopped on,
     // so this join is already resolving by the time it is awaited.
     api.await??;
     Ok(())
+}
+
+/// Say so when the pairing QR will carry an address no other device can use.
+///
+/// The failure this catches is quiet and specific: bind the daemon to the LAN
+/// or a tailnet address so a phone can reach it, forget to set
+/// `server.public_url`, and it defaults to the bind — which is right — but bind
+/// to `0.0.0.0` and it becomes a QR pointing at `0.0.0.0`, while leaving the
+/// default loopback bind produces a QR pointing at the phone itself. In both
+/// cases the daemon starts, the console prints a handsome QR code, and pairing
+/// fails with a connection error that says nothing about why.
+fn warn_about_unreachable_pairing(bind: &str, public_url: &str) {
+    let host = public_url
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .rsplit_once(':')
+        .map_or(public_url, |(host, _)| host);
+
+    let unroutable = matches!(host, "0.0.0.0" | "[::]" | "::");
+    let loopback = matches!(host, "127.0.0.1" | "localhost" | "[::1]" | "::1");
+    let bind_is_loopback = bind.starts_with("127.") || bind.starts_with("[::1]") || bind.starts_with("localhost");
+
+    if unroutable {
+        tracing::warn!(
+            %public_url,
+            "the pairing QR will carry an address no device can dial; set server.public_url              to this machine's LAN or tailnet address"
+        );
+    } else if loopback && !bind_is_loopback {
+        tracing::warn!(
+            %bind,
+            %public_url,
+            "bound beyond loopback but the pairing QR still says localhost, which on a phone              means the phone; set server.public_url"
+        );
+    }
 }
 
 /// Build the enabled driver set.

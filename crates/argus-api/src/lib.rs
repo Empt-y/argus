@@ -133,6 +133,16 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/devices", get(routes::pairing::list))
         .route("/v1/devices/{device_id}", delete(routes::pairing::revoke))
         .route("/v1/pair/code", post(routes::pairing::new_code))
+        .route(
+            "/v1/geofences",
+            get(routes::alerting::list).post(routes::alerting::create),
+        )
+        .route(
+            "/v1/geofences/{geofence_id}",
+            delete(routes::alerting::delete).post(routes::alerting::set_enabled),
+        )
+        .route("/v1/alerts", get(routes::alerting::alerts))
+        .route("/v1/alerts/{alert_id}/ack", post(routes::alerting::acknowledge))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_device,

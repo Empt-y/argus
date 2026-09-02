@@ -1,3 +1,4 @@
+pub mod alerting;
 pub mod catalog;
 pub mod entities;
 pub mod pairing;

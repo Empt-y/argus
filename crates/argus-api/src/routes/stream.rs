@@ -17,6 +17,7 @@ use argus_core::geo::BoundingBox;
 use argus_store::EntityFilter;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
+use axum::Extension;
 use axum::response::Response;
 use chrono::{DateTime, Duration, Utc};
 use std::collections::HashMap;
@@ -77,14 +78,74 @@ enum ServerFrame {
         count: usize,
         entities: Vec<argus_store::EntityRow>,
     },
+    /// A geofence fired.
+    ///
+    /// Deliberately not filtered by the client's viewport. An alert is about a
+    /// fence the operator armed, not about what happens to be on screen —
+    /// missing one because the map had been panned elsewhere would defeat the
+    /// point of having drawn it.
+    Alerts {
+        at: DateTime<Utc>,
+        count: usize,
+        alerts: Vec<argus_store::model::AlertRow>,
+    },
     Pong,
     Error {
         message: String,
     },
 }
 
-pub async fn stream(ws: WebSocketUpgrade, State(state): State<ApiState>) -> Response {
-    ws.on_upgrade(move |socket| run(socket, state))
+pub async fn stream(
+    ws: WebSocketUpgrade,
+    State(state): State<ApiState>,
+    Extension(caller): Extension<crate::Caller>,
+) -> Response {
+    let device = caller.delivery_id();
+    ws.on_upgrade(move |socket| run(socket, state, device))
+}
+
+/// Cap on alerts replayed in one frame, so a device that has been off for a
+/// week reconnects to a readable backlog rather than a wall.
+const MAX_ALERTS: i64 = 100;
+
+/// Send whatever this device has not been shown, and record that it has been.
+///
+/// This is the entire replay mechanism, and it is a consequence of
+/// `alerts.delivered_to` being per-device: "what did I miss" and "what is new"
+/// are the same query, so a phone reconnecting after an hour in a tunnel needs
+/// no special path. It runs on connect and on every tick.
+async fn flush_alerts(
+    socket: &mut WebSocket,
+    state: &ApiState,
+    device: &str,
+) -> bool {
+    let pending = match state.store.alerts_undelivered_to(device, MAX_ALERTS).await {
+        Ok(pending) => pending,
+        Err(err) => {
+            tracing::warn!("could not read pending alerts: {err}");
+            return true;
+        }
+    };
+    if pending.is_empty() {
+        return true;
+    }
+
+    let frame = ServerFrame::Alerts {
+        at: Utc::now(),
+        count: pending.len(),
+        alerts: pending.clone(),
+    };
+    if !send(socket, &frame).await {
+        // Not marked delivered: the socket died mid-send, so the next
+        // connection should see these again rather than lose them.
+        return false;
+    }
+    for alert in &pending {
+        if let Err(err) = state.store.mark_alert_delivered(alert.alert_id, device).await {
+            tracing::warn!(alert = alert.alert_id, "could not record delivery: {err}");
+        }
+    }
+    true
 }
 
 struct Subscription {
@@ -126,10 +187,16 @@ impl Subscription {
     }
 }
 
-async fn run(mut socket: WebSocket, state: ApiState) {
+async fn run(mut socket: WebSocket, state: ApiState, device: String) {
     let mut subscription: Option<Subscription> = None;
     let mut ticker = tokio::time::interval(POLL_INTERVAL);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    // Before anything else, and before the client has even subscribed: what it
+    // missed while it was away is the first thing it should be told.
+    if !flush_alerts(&mut socket, &state, &device).await {
+        return;
+    }
 
     loop {
         tokio::select! {
@@ -165,6 +232,12 @@ async fn run(mut socket: WebSocket, state: ApiState) {
                 }
             }
             _ = ticker.tick() => {
+                // Alerts first, and regardless of whether a viewport has been
+                // subscribed: a client that only wants notifications should not
+                // have to pretend to be a map to get them.
+                if !flush_alerts(&mut socket, &state, &device).await {
+                    break;
+                }
                 let Some(sub) = subscription.as_mut() else { continue };
                 match state
                     .store

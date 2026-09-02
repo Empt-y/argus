@@ -54,6 +54,18 @@ impl Caller {
         }
     }
 
+    /// A stable identifier for delivery tracking.
+    ///
+    /// The device *id*, not its name: `alerts.delivered_to` is how a phone
+    /// knows what it missed, and two tablets both called "kitchen" sharing a
+    /// delivery record would mean one of them silently never being told.
+    pub fn delivery_id(&self) -> String {
+        match self {
+            Self::Device(d) => d.device_id.to_string(),
+            Self::Local => "localhost".to_string(),
+        }
+    }
+
     /// Whether this caller may change server state — pair or revoke devices,
     /// write geofences. Read-only devices exist so a wall display can be handed
     /// a token without handing it the ability to unpair the phone.

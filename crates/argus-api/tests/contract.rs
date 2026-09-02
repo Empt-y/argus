@@ -49,7 +49,7 @@ async fn state(auth: AuthMode) -> Option<(ApiState, tokio::sync::MutexGuard<'sta
     let url = std::env::var("ARGUS_TEST_DATABASE_URL").ok()?;
     let store = Store::connect(&url, 4).await.expect("connect to test database");
     store.migrate().await.expect("migrations apply");
-    sqlx::query("TRUNCATE observations, entities, sources, devices CASCADE")
+    sqlx::query("TRUNCATE observations, entities, sources, devices, geofences, alerts CASCADE")
         .execute(store.pool())
         .await
         .expect("truncate");
@@ -151,6 +151,25 @@ async fn send(
         .expect("body")
         .to_vec();
     (status, body)
+}
+
+async fn post_json(
+    state: &ApiState,
+    uri: &str,
+    body: &Value,
+    peer: std::net::SocketAddr,
+) -> (StatusCode, Vec<u8>) {
+    send(
+        state,
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(body).unwrap()))
+            .unwrap(),
+        peer,
+    )
+    .await
 }
 
 /// Like [`get`], but keeps the response headers.
@@ -474,6 +493,214 @@ async fn an_event_outlives_an_aircraft_by_a_long_way() {
         .collect();
     assert!(keys.contains(&"quake1"), "a day-old quake is still news: {keys:?}");
     assert!(!keys.contains(&"olda1"), "a day-old aircraft is not: {keys:?}");
+}
+
+/// A geofence round-trips, and its rule is checked before it is stored.
+///
+/// The validation is the point. A fence whose rule will not parse is skipped by
+/// the engine every thirty seconds for the rest of its life while looking
+/// perfectly armed in the list — so the typo has to be a 400 at the moment
+/// somebody makes it, not a silence discovered later.
+#[tokio::test]
+async fn a_geofence_is_created_validated_and_deleted() {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let body = serde_json::json!({
+        "name": "Heathrow final",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[-0.42, 51.44], [-0.28, 51.44], [-0.28, 51.50],
+                             [-0.42, 51.50], [-0.42, 51.44]]]
+        },
+        "rule": { "trigger": "enters", "kinds": ["aircraft"], "max_alt_m": 1500 }
+    });
+    let (status, created) = post_json(&state, "/v1/geofences", &body, LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&created));
+    let created = json(&created);
+    let id = created["geofence_id"].as_i64().expect("an id");
+    assert_eq!(created["geometry"]["type"], "Polygon");
+    assert_eq!(created["enabled"], true);
+
+    let (_, listed) = get(&state, "/v1/geofences", LOOPBACK).await;
+    assert_eq!(json(&listed)["geofences"][0]["name"], "Heathrow final");
+
+    // A rule with a typo in a predicate name is refused rather than stored as
+    // something that matches everything.
+    let typo = serde_json::json!({
+        "name": "typo",
+        "geometry": created["geometry"],
+        "rule": { "max_altitude_m": 1500 }
+    });
+    let (status, err) = post_json(&state, "/v1/geofences", &typo, LOOPBACK).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        String::from_utf8_lossy(&err).contains("max_altitude_m"),
+        "the error should name the field: {}",
+        String::from_utf8_lossy(&err)
+    );
+
+    // A self-intersecting ring is the dangerous one: ST_Contains against an
+    // invalid polygon is undefined rather than merely false, so this fence
+    // would be unpredictable rather than simply silent.
+    let bowtie = serde_json::json!({
+        "name": "bowtie",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[0.0, 0.0], [1.0, 1.0], [1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]]
+        },
+        "rule": {}
+    });
+    let (status, err) = post_json(&state, "/v1/geofences", &bowtie, LOOPBACK).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        String::from_utf8_lossy(&err).contains("Self-intersection"),
+        "PostGIS names the exact vertex; pass that on: {}",
+        String::from_utf8_lossy(&err)
+    );
+
+    // A degenerate ring is caught by the same validity check rather than by a
+    // separate area test — see `validate_geofence_shape`.
+    let degenerate = serde_json::json!({
+        "name": "degenerate",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]]
+        },
+        "rule": {}
+    });
+    let (status, _) = post_json(&state, "/v1/geofences", &degenerate, LOOPBACK).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // A line is not an area.
+    let line = serde_json::json!({
+        "name": "line",
+        "geometry": { "type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0]] },
+        "rule": {}
+    });
+    let (status, _) = post_json(&state, "/v1/geofences", &line, LOOPBACK).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // And a document PostGIS cannot parse at all, in its own words.
+    let nonsense = serde_json::json!({
+        "name": "nonsense",
+        "geometry": { "type": "Rhombus", "coordinates": [] },
+        "rule": {}
+    });
+    let (status, _) = post_json(&state, "/v1/geofences", &nonsense, LOOPBACK).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, _) = send(
+        &state,
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/v1/geofences/{id}"))
+            .body(Body::empty())
+            .unwrap(),
+        LOOPBACK,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, listed) = get(&state, "/v1/geofences", LOOPBACK).await;
+    assert!(json(&listed)["geofences"].as_array().unwrap().is_empty());
+}
+
+/// Delivery is tracked per device, which is what makes replay possible.
+///
+/// The same query answers "what is new" and "what did I miss", so a phone that
+/// spent ten minutes in a tunnel needs no special path — and a tablet that was
+/// watching the whole time is not told twice.
+#[tokio::test]
+async fn an_alert_is_pending_for_each_device_until_that_device_sees_it() {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let alert = state
+        .store
+        .insert_alert(&argus_store::NewAlert {
+            geofence_id: None,
+            entity: EntityId::aircraft("a1b2c3"),
+            fired_at: Utc::now(),
+            severity: "notice".into(),
+            message: "FLTa1b2c3 entered Heathrow final".into(),
+            lon: Some(-0.35),
+            lat: Some(51.47),
+            attrs: serde_json::json!({ "geofence": "Heathrow final" }),
+        })
+        .await
+        .expect("insert alert");
+
+    let phone = "device-phone";
+    let tablet = "device-tablet";
+    assert_eq!(state.store.alerts_undelivered_to(phone, 10).await.unwrap().len(), 1);
+    assert_eq!(state.store.alerts_undelivered_to(tablet, 10).await.unwrap().len(), 1);
+
+    state.store.mark_alert_delivered(alert.alert_id, phone).await.unwrap();
+    assert!(state.store.alerts_undelivered_to(phone, 10).await.unwrap().is_empty());
+    assert_eq!(
+        state.store.alerts_undelivered_to(tablet, 10).await.unwrap().len(),
+        1,
+        "one device seeing an alert must not consume it for another"
+    );
+
+    // Marking twice does not grow the array without bound: a client that
+    // reconnects mid-replay gets the same alert again and re-marks it.
+    state.store.mark_alert_delivered(alert.alert_id, phone).await.unwrap();
+    let rows = state.store.alerts(None, false, 10).await.unwrap();
+    assert_eq!(rows[0].delivered_to.as_array().unwrap().len(), 1);
+
+    // Acknowledging retires it for everyone, including devices that never saw
+    // it — an alert somebody has dealt with should not surface on the tablet an
+    // hour later as though it were news.
+    let (status, _) = send(
+        &state,
+        Request::builder()
+            .method("POST")
+            .uri(format!("/v1/alerts/{}/ack", alert.alert_id))
+            .body(Body::empty())
+            .unwrap(),
+        LOOPBACK,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(state.store.alerts_undelivered_to(tablet, 10).await.unwrap().is_empty());
+
+    let (_, listed) = get(&state, "/v1/alerts?limit=10", LOOPBACK).await;
+    assert_eq!(json(&listed)["alerts"][0]["message"], "FLTa1b2c3 entered Heathrow final");
+}
+
+/// A read-only device can watch but cannot arm.
+#[tokio::test]
+async fn a_read_only_device_cannot_create_a_geofence() {
+    let Some((state, _guard)) = state(AuthMode::Required).await else {
+        return;
+    };
+    let issued = state
+        .store
+        .create_device("wall display", &["read".to_string()])
+        .await
+        .expect("device");
+    let body = serde_json::json!({
+        "name": "nope",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[-0.42, 51.44], [-0.28, 51.44], [-0.28, 51.50],
+                             [-0.42, 51.50], [-0.42, 51.44]]]
+        }
+    });
+    let (status, _) = send(
+        &state,
+        Request::builder()
+            .method("POST")
+            .uri("/v1/geofences")
+            .header("authorization", format!("Bearer {}", issued.token))
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap(),
+        REMOTE,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
