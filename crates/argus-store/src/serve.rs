@@ -49,7 +49,7 @@ impl Store {
     /// still one call away at `/v1/sources`, which is where "why is this
     /// degraded" gets answered.
     pub async fn layers(&self) -> Result<Vec<model::LayerRow>, StoreError> {
-        let rows = sqlx::query_as::<_, model::LayerRow>(
+        let rows = sqlx::query_as::<_, model::LayerRow>(&format!(
             r#"
             WITH ranked AS (
                 SELECT s.*,
@@ -69,8 +69,12 @@ impl Store {
                 FROM sources s
             ),
             counts AS (
+                -- Counted under the same horizon the map draws under, or the
+                -- rail says 1,528 aircraft over a map showing 212.
                 SELECT layer_id, count(*) AS live_entities
-                FROM entities GROUP BY layer_id
+                FROM entities
+                WHERE {live_horizon}
+                GROUP BY layer_id
             )
             SELECT r.layer_id,
                    (array_agg(r.entity_kind  ORDER BY r.rank, r.source_id))[1] AS entity_kind,
@@ -89,7 +93,8 @@ impl Store {
             GROUP BY r.layer_id
             ORDER BY r.layer_id
             "#,
-        )
+            live_horizon = crate::horizon::within_horizon("entity_kind", "observed_at", "now()"),
+        ))
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
@@ -168,7 +173,7 @@ impl Store {
         for part in bbox.split_at_antimeridian() {
             let rows = match at {
                 None => {
-                    sqlx::query_as::<_, model::TileRow>(
+                    sqlx::query_as::<_, model::TileRow>(&format!(
                         r#"
                         SELECT entity_kind, entity_key, source_id, layer_id, observed_at,
                                ST_Simplify(COALESCE(geom, position), $5) AS geometry,
@@ -180,10 +185,13 @@ impl Store {
                           AND ($6::text[] IS NULL OR layer_id = ANY($6))
                           AND ($7::text[] IS NULL OR entity_kind = ANY($7))
                           AND COALESCE(geom, position) IS NOT NULL
+                          AND {horizon}
                         ORDER BY observed_at DESC
                         LIMIT $8
                         "#,
-                    )
+                        horizon =
+                            crate::horizon::within_horizon("entity_kind", "observed_at", "now()"),
+                    ))
                     .bind(part.west)
                     .bind(part.south)
                     .bind(part.east)
@@ -196,7 +204,7 @@ impl Store {
                     .await?
                 }
                 Some(at) => {
-                    sqlx::query_as::<_, model::TileRow>(
+                    sqlx::query_as::<_, model::TileRow>(&format!(
                         r#"
                         SELECT DISTINCT ON (t.entity_kind, t.entity_key)
                                t.entity_kind, t.entity_key, t.source_id,
@@ -208,7 +216,7 @@ impl Store {
                         FROM tracks_1m t
                         LEFT JOIN sources s ON s.source_id = t.source_id
                         WHERE t.bucket <= $9
-                          AND t.bucket > $9 - INTERVAL '15 minutes'
+                          AND {horizon}
                           AND t.position && ST_MakeEnvelope($1, $2, $3, $4, 4326)
                           AND ($6::text[] IS NULL OR COALESCE(s.layer_id, t.source_id) = ANY($6))
                           AND ($7::text[] IS NULL OR t.entity_kind = ANY($7))
@@ -216,7 +224,8 @@ impl Store {
                         ORDER BY t.entity_kind, t.entity_key, t.bucket DESC
                         LIMIT $8
                         "#,
-                    )
+                        horizon = crate::horizon::within_horizon("t.entity_kind", "t.bucket", "$9"),
+                    ))
                     .bind(part.west)
                     .bind(part.south)
                     .bind(part.east)

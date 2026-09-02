@@ -6,7 +6,7 @@
 //! hard before widening it: a field that only one source can populate belongs in
 //! [`Observation::attrs`], not here.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use geo_types::Geometry;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -69,6 +69,66 @@ impl EntityKind {
     /// forever.
     pub const fn reports_current_state(self) -> bool {
         !matches!(self, Self::Event)
+    }
+
+    /// Every kind, so that anything deriving a table from this enum cannot
+    /// silently omit one.
+    pub const ALL: [Self; 7] = [
+        Self::Aircraft,
+        Self::Vessel,
+        Self::Satellite,
+        Self::Event,
+        Self::Station,
+        Self::Feature,
+        Self::Measure,
+    ];
+
+    /// How long an observation of this kind keeps describing the present.
+    ///
+    /// `None` means forever: a submarine cable observed once is still there.
+    ///
+    /// This exists because "live" was, for a while, a lie. The live view had no
+    /// horizon at all, so a map left running showed every aircraft ever seen —
+    /// 1,213 of 1,528 of them more than a day old — drawn identically to the
+    /// 212 that were actually in the sky. Worse, the DVR *did* have a window,
+    /// so rewinding to five minutes ago showed fewer contacts than live did.
+    /// Being able to trust that a contact on the map is a contact in the world
+    /// is most of what this project is for.
+    ///
+    /// The horizon is per-kind because a single number cannot be right for all
+    /// of them. An aircraft position ten minutes old is not a current contact.
+    /// An earthquake ten minutes old is *news*, and one from last Tuesday is
+    /// still a true statement about where the ground moved — events are facts
+    /// about a moment rather than claims about now, which is the same
+    /// distinction [`Self::reports_current_state`] draws for staleness.
+    ///
+    /// These are deliberately generous. The cost of being wrong in one
+    /// direction is a contact that lingers a few minutes past its usefulness;
+    /// in the other, it is a real vessel vanishing off the map because its
+    /// constellation had a slow pass.
+    pub const fn live_horizon(self) -> Option<Duration> {
+        let minutes = match self {
+            // ADS-B is seconds-fresh when it is working at all. Fifteen minutes
+            // is long past the point where a position is worth drawing, and it
+            // matches the window the DVR already used.
+            Self::Aircraft => 15,
+            // AIS is far sparser — a satellite-relayed vessel report can be
+            // hours apart with nothing wrong. Six hours.
+            Self::Vessel => 6 * 60,
+            // Propagated from elements every poll, so a gap means propagation
+            // stopped, which is exactly when the map should stop claiming to
+            // know where they are.
+            Self::Satellite => 60,
+            // A week: what happened stays true, and the raw retention is the
+            // real bound on how far back these go.
+            Self::Event => 7 * 24 * 60,
+            // Fixed installations report on their own schedule, often hourly.
+            Self::Station => 24 * 60,
+            // Geography does not expire.
+            Self::Feature => return None,
+            Self::Measure => 6 * 60,
+        };
+        Some(Duration::minutes(minutes))
     }
 }
 

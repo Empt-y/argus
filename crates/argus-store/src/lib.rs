@@ -10,6 +10,7 @@ use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::time::Duration;
 
 pub mod devices;
+pub mod horizon;
 pub mod model;
 pub mod serve;
 
@@ -427,7 +428,7 @@ impl Store {
         let parts = bbox.split_at_antimeridian();
         let mut out = Vec::new();
         for part in parts {
-            let rows = sqlx::query_as::<_, EntityRow>(
+            let rows = sqlx::query_as::<_, EntityRow>(&format!(
                 r#"
                 SELECT entity_kind, entity_key, source_id, layer_id, observed_at,
                        ST_X(position) AS lon, ST_Y(position) AS lat,
@@ -440,10 +441,12 @@ impl Store {
                        OR geom && ST_MakeEnvelope($1, $2, $3, $4, 4326))
                   AND ($5::text[] IS NULL OR layer_id = ANY($5))
                   AND ($6::text[] IS NULL OR entity_kind = ANY($6))
+                  AND {horizon}
                 ORDER BY observed_at DESC
                 LIMIT $7
                 "#,
-            )
+                horizon = crate::horizon::within_horizon("entity_kind", "observed_at", "now()"),
+            ))
             .bind(part.west)
             .bind(part.south)
             .bind(part.east)
@@ -462,9 +465,12 @@ impl Store {
     /// Everything that was inside a box at a past instant — the DVR query.
     ///
     /// Resolves against `tracks_1m`, picking each entity's newest bucket at or
-    /// before `at`. The `INTERVAL '15 minutes'` floor bounds how far back a
-    /// single stale sample can be dragged forward: without it, an aircraft that
-    /// landed hours earlier keeps appearing in every later snapshot forever.
+    /// before `at`. The horizon bounds how far back a single stale sample can be
+    /// dragged forward: without it, an aircraft that landed hours earlier keeps
+    /// appearing in every later snapshot forever. It is
+    /// [`crate::horizon`]'s per-kind table rather than a flat window, and the
+    /// same one the live query uses — so rewinding shows the population that
+    /// *was* live then, rather than a differently-filtered one.
     pub async fn entities_at(
         &self,
         bbox: BoundingBox,
@@ -475,7 +481,7 @@ impl Store {
         let parts = bbox.split_at_antimeridian();
         let mut out = Vec::new();
         for part in parts {
-            let rows = sqlx::query_as::<_, EntityRow>(
+            let rows = sqlx::query_as::<_, EntityRow>(&format!(
                 r#"
                 SELECT DISTINCT ON (t.entity_kind, t.entity_key)
                        t.entity_kind, t.entity_key, t.source_id,
@@ -486,18 +492,19 @@ impl Store {
                        t.alt_m, t.alt_datum,
                        t.course_deg, t.heading_deg, t.speed_mps, t.vrate_mps,
                        t.quality, t.label,
-                       '{}'::jsonb AS attrs
+                       '{{}}'::jsonb AS attrs
                 FROM tracks_1m t
                 LEFT JOIN sources s ON s.source_id = t.source_id
                 WHERE t.bucket <= $5
-                  AND t.bucket > $5 - INTERVAL '15 minutes'
+                  AND {horizon}
                   AND t.position && ST_MakeEnvelope($1, $2, $3, $4, 4326)
                   AND ($6::text[] IS NULL OR COALESCE(s.layer_id, t.source_id) = ANY($6))
                   AND ($7::text[] IS NULL OR t.entity_kind = ANY($7))
                 ORDER BY t.entity_kind, t.entity_key, t.bucket DESC
                 LIMIT $8
                 "#,
-            )
+                horizon = crate::horizon::within_horizon("t.entity_kind", "t.bucket", "$5"),
+            ))
             .bind(part.west)
             .bind(part.south)
             .bind(part.east)
