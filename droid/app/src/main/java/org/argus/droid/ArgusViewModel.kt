@@ -88,6 +88,10 @@ data class UiState(
     /** The basemap in use, and the names the server says it offers. */
     val basemap: String? = null,
     val basemapsOffered: List<String> = emptyList(),
+    /** A place the map has been asked to go, and a token so the same
+     *  coordinates asked for twice still move it the second time. */
+    val focus: Pair<Double, Double>? = null,
+    val focusNonce: Int = 0,
 ) {
     val live: Boolean get() = at == null
     val unacknowledged: Int get() = alerts.count { it.acknowledgedAt == null }
@@ -107,6 +111,26 @@ class ArgusViewModel(app: Application) : AndroidViewModel(app) {
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    /**
+     * The box the map is currently showing.
+     *
+     * Held as a plain property rather than in [UiState] because it changes on
+     * every frame of a pan and nothing should recompose for it — but the
+     * offline downloader lives in the Settings tab now and has to know what
+     * "this area" means while the map is not even on screen.
+     */
+    var lastViewport: org.maplibre.android.geometry.LatLngBounds? = null
+        private set
+
+    fun noteViewport(bounds: org.maplibre.android.geometry.LatLngBounds) {
+        lastViewport = bounds
+    }
+
+    /** Ask the map to centre somewhere — from the alerts list, say. */
+    fun focus(lat: Double, lon: Double) {
+        _state.update { it.copy(focus = lat to lon, focusNonce = it.focusNonce + 1) }
+    }
 
     private var catalogueJob: Job? = null
     private var selectionJob: Job? = null

@@ -66,11 +66,6 @@ private fun Panel(modifier: Modifier = Modifier, content: @Composable () -> Unit
 fun StatusBar(
     state: UiState,
     onRetry: () -> Unit,
-    onPair: () -> Unit,
-    onSources: () -> Unit,
-    onOffline: () -> Unit,
-    onAlerts: () -> Unit,
-    onTheme: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val connection = state.connection
@@ -102,33 +97,10 @@ fun StatusBar(
                 style = MaterialTheme.typography.labelMedium,
             )
             Spacer(Modifier.size(6.dp))
-            // Two rows rather than one, and deliberately not a wrapping layout:
-            // the labels change width with state ("pair" becomes "device"), and
-            // a fourth action was enough to push the last one past the edge of
-            // the panel, where it rendered over the layer rail and could not be
-            // tapped. Two fixed rows cannot do that whatever the labels say.
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                HudAction("retry", onRetry)
-                HudAction(if (state.paired) "device" else "pair", onPair)
-            }
-            Spacer(Modifier.size(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                HudAction("sources", onSources)
-                HudAction("offline", onOffline)
-                // The count is the point of the entry: an alert nobody has
-                // looked at is the only thing on this panel that is waiting for
-                // a person rather than reporting a state.
-                HudAction(
-                    label = if (state.unacknowledged > 0) "alerts ${state.unacknowledged}"
-                    else "alerts",
-                    onClick = onAlerts,
-                    colour = if (state.unacknowledged > 0) Color(0xFFF2C94C) else null,
-                )
-            }
-            Spacer(Modifier.size(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                HudAction(state.basemap ?: "theme", onTheme)
-            }
+            // Just the one action now. Everything else that used to crowd
+            // this panel — sources, alerts, offline, pairing, theme — is a tab,
+            // which is the whole point of the tab bar existing.
+            HudAction("retry", onRetry)
         }
     }
 }

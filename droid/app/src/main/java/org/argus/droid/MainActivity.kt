@@ -19,7 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.graphics.Color
-import org.argus.droid.ui.MapScreen
+import org.argus.droid.ui.ArgusApp
 import org.maplibre.android.MapLibre
 import org.maplibre.android.module.http.HttpRequestUtil
 
@@ -72,7 +72,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = ARGUS_DARK) {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
-                    MapScreen(vm = vm, pairLink = pairLink, onPairLinkHandled = { pairLink = null })
+                    ArgusApp(vm = vm, pairLink = pairLink, onPairLinkHandled = { pairLink = null })
                 }
             }
         }

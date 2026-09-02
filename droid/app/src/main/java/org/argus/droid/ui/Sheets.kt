@@ -3,7 +3,9 @@ package org.argus.droid.ui
 import android.os.Build
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -64,7 +66,7 @@ fun EntitySheet(
             modifier = Modifier
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp)
-                .heightIn(max = 520.dp)
+                .fillMaxSize()
                 .verticalScroll(rememberScrollState()),
         ) {
             Text(
@@ -193,14 +195,12 @@ internal fun Field(name: String, value: String) {
 /** Per-provider health, including the error text when there is one. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SourceSheet(sources: List<SourceRow>, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+fun SourcesContent(sources: List<SourceRow>, modifier: Modifier = Modifier) {
+    Box(modifier) {
         Column(
             modifier = Modifier
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp)
-                .heightIn(max = 520.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(bottom = 28.dp),
         ) {
             Text("sources", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.size(10.dp))
@@ -278,14 +278,14 @@ fun SourceSheet(sources: List<SourceRow>, onDismiss: () -> Unit) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PairingSheet(
+fun PairingContent(
     baseUrl: String,
     initialCode: String = "",
     paired: Boolean,
-    onDismiss: () -> Unit,
     onSetServer: (String) -> Unit,
     onPair: (String, String, String, (String?) -> Unit) -> Unit,
     onUnpair: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var server by remember { mutableStateOf(baseUrl) }
     var code by remember { mutableStateOf(initialCode) }
@@ -293,12 +293,11 @@ fun PairingSheet(
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    Box(modifier) {
         Column(
             modifier = Modifier
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(bottom = 28.dp),
         ) {
             Text("server", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.size(8.dp))
@@ -316,9 +315,7 @@ fun PairingSheet(
                 color = if (paired) Color(0xFF2E9E63) else MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.size(8.dp))
-            TextButton(onClick = { onSetServer(server); onDismiss() }) {
-                Text("use this address")
-            }
+            TextButton(onClick = { onSetServer(server) }) { Text("use this address") }
 
             Spacer(Modifier.size(8.dp))
             HorizontalDivider()
@@ -361,12 +358,12 @@ fun PairingSheet(
                         message = null
                         onPair(server, code, name) { error ->
                             busy = false
-                            if (error == null) onDismiss() else message = error
+                            message = error
                         }
                     },
                 ) { Text(if (busy) "pairing…" else "pair") }
                 if (paired) {
-                    TextButton(onClick = { onUnpair(); onDismiss() }) { Text("forget token") }
+                    TextButton(onClick = onUnpair) { Text("forget token") }
                 }
             }
         }
@@ -383,20 +380,18 @@ fun PairingSheet(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AlertSheet(
+fun AlertsContent(
     alerts: List<Alert>,
     geofences: List<GeofenceView>,
     onAcknowledge: (Long) -> Unit,
-    onDismiss: () -> Unit,
     onGoTo: (Double, Double) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    Box(modifier) {
         Column(
             modifier = Modifier
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp)
-                .heightIn(max = 540.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(bottom = 28.dp),
         ) {
             Text("alerts", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.size(4.dp))
@@ -444,7 +439,12 @@ fun AlertSheet(
                                     )
                                     append(" · ")
                                     append(alert.severity)
-                                    alert.attrs["alt_m"]?.let { append(" · ${it}m") }
+                                    // Rounded: the raw JSON number arrives as
+                                    // 175.26000000000002, which is a float
+                                    // artefact rather than a measurement.
+                                    alert.attrs["alt_m"]
+                                        ?.let { (it as? JsonPrimitive)?.content?.toDoubleOrNull() }
+                                        ?.let { append(" · ${it.roundToInt()} m") }
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 fontFamily = FontFamily.Monospace,
@@ -485,18 +485,17 @@ private fun String.severityColour(): Color = when (this) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ThemeSheet(
+fun BasemapContent(
     offered: List<String>,
     current: String?,
     onPick: (String?) -> Unit,
-    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    Box(modifier) {
         Column(
             modifier = Modifier
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(bottom = 28.dp),
         ) {
             Text("basemap", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.size(4.dp))

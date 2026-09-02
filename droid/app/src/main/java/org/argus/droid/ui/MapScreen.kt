@@ -3,9 +3,12 @@ package org.argus.droid.ui
 import android.graphics.PointF
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -19,7 +22,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.argus.droid.ArgusViewModel
-import org.argus.droid.PairLink
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
@@ -36,23 +38,17 @@ import org.maplibre.android.maps.Style
  * is the claim the Android client exists to test.
  */
 @Composable
-fun MapScreen(
+fun WorldTab(
     vm: ArgusViewModel,
-    pairLink: PairLink? = null,
-    onPairLinkHandled: () -> Unit = {},
+    visible: Boolean,
+    contentPadding: PaddingValues,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val mapView = rememberMapView()
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var style by remember { mutableStateOf<Style?>(null) }
-    var showPairing by remember { mutableStateOf(false) }
-    var showSources by remember { mutableStateOf(false) }
-    var showOffline by remember { mutableStateOf(false) }
-    var showAlerts by remember { mutableStateOf(false) }
-    var showTheme by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.startPolling() }
-    LaunchedEffect(pairLink) { if (pairLink != null) showPairing = true }
 
     // One effect per thing that can change, rather than one that rebuilds the
     // map: a style reload costs a visible flash, so it must happen when the
@@ -63,6 +59,9 @@ fun MapScreen(
                 .target(LatLng(51.47, -0.45))
                 .zoom(8.0)
                 .build()
+            loaded.addOnCameraIdleListener {
+                vm.noteViewport(loaded.projection.visibleRegion.latLngBounds)
+            }
             loaded.addOnMapClickListener { point ->
                 val current = loaded.style ?: return@addOnMapClickListener false
                 val screen = loaded.projection.toScreenLocation(point)
@@ -113,8 +112,24 @@ fun MapScreen(
         style?.showTrack(state.selection?.track.orEmpty())
     }
 
+    LaunchedEffect(state.focusNonce) {
+        val target = state.focus ?: return@LaunchedEffect
+        map?.cameraPosition = CameraPosition.Builder()
+            .target(LatLng(target.first, target.second))
+            .zoom(maxOf(map?.cameraPosition?.zoom ?: 8.0, 11.0))
+            .build()
+    }
+
     LaunchedEffect(style, state.geofences) {
         style?.showGeofences(state.geofences)
+    }
+
+    // Hidden rather than removed: the map keeps its GL surface, its style and
+    // its camera, and simply stops drawing. `onStop` is what actually halts
+    // MapLibre's render loop; without it a map nobody can see still costs a
+    // frame's work several times a second.
+    LaunchedEffect(visible, mapView) {
+        if (visible) mapView.onStart() else mapView.onStop()
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -125,15 +140,23 @@ fun MapScreen(
         // exactly where a thumb tries to drag it.
         AndroidView(modifier = Modifier.fillMaxSize(), factory = { mapView })
 
-        Box(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+        // Top and sides from the system insets; the bottom from the Scaffold,
+        // which already includes the navigation bar underneath the tab bar.
+        // Taking both at the bottom counts the system inset twice and leaves
+        // the scrubber floating well clear of the tabs.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(
+                    WindowInsets.safeDrawing.only(
+                        WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+                    )
+                )
+                .padding(bottom = contentPadding.calculateBottomPadding()),
+        ) {
         StatusBar(
             state = state,
             onRetry = vm::refreshCatalogue,
-            onPair = { showPairing = true },
-            onSources = { showSources = true },
-            onOffline = { vm.refreshRegions(); showOffline = true },
-            onAlerts = { showAlerts = true },
-            onTheme = { showTheme = true },
             modifier = Modifier.align(Alignment.TopStart).padding(12.dp),
         )
 
@@ -166,63 +189,6 @@ fun MapScreen(
                     .zoom(maxOf(map?.cameraPosition?.zoom ?: 8.0, 10.0))
                     .build()
             },
-        )
-    }
-
-    if (showPairing) {
-        PairingSheet(
-            baseUrl = pairLink?.server ?: state.baseUrl,
-            initialCode = pairLink?.code.orEmpty(),
-            paired = state.paired,
-            onDismiss = { showPairing = false; onPairLinkHandled() },
-            onSetServer = vm::setServer,
-            onPair = vm::pair,
-            onUnpair = vm::unpair,
-        )
-    }
-
-    if (showSources) {
-        SourceSheet(sources = state.sources, onDismiss = { showSources = false })
-    }
-
-    if (showTheme) {
-        ThemeSheet(
-            offered = state.basemapsOffered,
-            current = state.basemap,
-            onPick = { vm.setBasemap(it); showTheme = false },
-            onDismiss = { showTheme = false },
-        )
-    }
-
-    if (showAlerts) {
-        AlertSheet(
-            alerts = state.alerts,
-            geofences = state.geofences,
-            onAcknowledge = vm::acknowledgeAlert,
-            onDismiss = { showAlerts = false },
-            onGoTo = { lat, lon ->
-                map?.cameraPosition = CameraPosition.Builder()
-                    .target(LatLng(lat, lon))
-                    .zoom(maxOf(map?.cameraPosition?.zoom ?: 8.0, 11.0))
-                    .build()
-            },
-        )
-    }
-
-    if (showOffline) {
-        OfflineSheet(
-            // The box on screen right now: an offline area you chose by looking
-            // at it needs no second map to draw a rectangle on.
-            bounds = map?.projection?.visibleRegion?.latLngBounds,
-            regions = state.regions,
-            progress = state.download,
-            onDismiss = { showOffline = false },
-            onDownload = { name, minZoom, maxZoom ->
-                map?.projection?.visibleRegion?.latLngBounds?.let {
-                    vm.downloadRegion(it, name, minZoom, maxZoom)
-                }
-            },
-            onDelete = vm::deleteRegion,
         )
     }
 }

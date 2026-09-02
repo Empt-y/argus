@@ -1,7 +1,9 @@
 package org.argus.droid.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -46,25 +48,23 @@ import org.maplibre.android.geometry.LatLngBounds
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun OfflineSheet(
+fun OfflineContent(
     bounds: LatLngBounds?,
     regions: List<StoredRegion>,
     progress: DownloadProgress?,
-    onDismiss: () -> Unit,
     onDownload: (String, Int, Int) -> Unit,
     onDelete: (Long) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var maxZoom by remember { mutableIntStateOf(12) }
     var name by remember { mutableStateOf("") }
     val minZoom = 6
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    Box(modifier) {
         Column(
             modifier = Modifier
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp)
-                .heightIn(max = 560.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(bottom = 28.dp),
         ) {
             Text("offline ground", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.size(4.dp))
