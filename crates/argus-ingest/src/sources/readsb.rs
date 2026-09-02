@@ -29,14 +29,13 @@ const FPM_TO_MPS: f64 = 0.00508;
 /// These endpoints cap the search radius. Asking for more is rejected outright.
 const MAX_RADIUS_NM: f64 = 250.0;
 
-/// Ceiling on how many radius queries one poll may make. A free community
-/// endpoint does not owe us the planet a circle at a time.
-const MAX_TILES: usize = 24;
+/// Ceiling on how many radius queries one poll may make.
+///
+/// Sized to admit a continent and refuse a planet: western Europe tiles to ~52
+/// circles, the whole globe to hundreds. A free community endpoint does not owe
+/// us the world a circle at a time.
+const MAX_TILES: usize = 64;
 
-/// Minimum gap between the tile requests of a single poll. These endpoints
-/// allow about one request a second; `MAX_TILES` at this spacing is a 23-second
-/// poll, which is why the ceiling is where it is.
-const TILE_SPACING: std::time::Duration = std::time::Duration::from_millis(1_100);
 
 /// Aircraft positions age fast. Anything this stale is a receiver still
 /// reporting a contact it has not actually heard from recently.
@@ -83,6 +82,32 @@ impl ReadsbProvider {
                 notice: Some("Aircraft data from the adsb.fi community network".into()),
             },
         )
+    }
+
+    /// A slower sweep over a fixed, wider region.
+    ///
+    /// The two-tier arrangement exists because every AOI shares one source
+    /// cadence: widening the AOI list to cover Europe would drag the home area
+    /// from a 20-second refresh to a minute-plus, paying for breadth everywhere
+    /// with freshness where it matters most. A separate source with its own
+    /// region and its own cadence buys the breadth without that trade.
+    ///
+    /// `Coverage::Fixed` rather than `Bounded`, so the scheduler leaves it
+    /// alone rather than handing it the AOI list — the region is this source's
+    /// own business, and it tiles it exactly as an AOI would be tiled.
+    pub fn wide(
+        http: HttpClient,
+        id: &str,
+        display_name: &str,
+        base_url: &str,
+        attribution: Attribution,
+        region: BoundingBox,
+        cadence_secs: u64,
+    ) -> Self {
+        let mut provider = Self::new(http, id, display_name, base_url, attribution);
+        provider.descriptor.coverage = Coverage::Fixed { bbox: region };
+        provider.descriptor.cadence = Cadence::every(cadence_secs);
+        provider
     }
 
     fn new(
@@ -222,7 +247,12 @@ impl Source for ReadsbProvider {
     }
 
     async fn poll(&self, ctx: &PollCtx) -> Result<Vec<Observation>, SourceError> {
-        let bbox = ctx.bbox.unwrap_or(BoundingBox::GLOBAL);
+        // A Fixed source is never handed the AOI list, so it falls back to
+        // the region it was built for rather than to the whole planet.
+        let bbox = ctx.bbox.unwrap_or(match self.descriptor.coverage {
+            Coverage::Fixed { bbox } => bbox,
+            _ => BoundingBox::GLOBAL,
+        });
         // Deliberately `Other`, which `is_retryable` excludes: an AOI too big
         // for this endpoint is a configuration mistake, and retrying it every
         // cadence would hide the message in a loop instead of surfacing it.
@@ -230,17 +260,11 @@ impl Source for ReadsbProvider {
             .map_err(|err| SourceError::Other(anyhow::anyhow!("{err}")))?;
 
         let mut observations = Vec::new();
-        for (index, (lat, lon, radius_nm)) in circles.iter().enumerate() {
-            // Paced, not blasted. These are free community endpoints that allow
-            // roughly a request a second; firing an AOI's five tiles back to
-            // back inside one second reads as a burst and earns a 429, which
-            // the chain then answers by sidelining the provider for fifteen
-            // minutes — so an over-eager poll costs far more coverage than it
-            // buys. Measured the hard way: adding a British Isles AOI rate-
-            // limited both aggregators on the first cycle.
-            if index > 0 {
-                tokio::time::sleep(TILE_SPACING).await;
-            }
+        // Not paced here. `HttpClient` holds a per-host budget shared by every
+        // source, which is the only level that can see the total offered load:
+        // this sweep and the flights chain both reach adsb.fi, and pacing them
+        // separately is how two individually-polite sources jointly earn a 429.
+        for (lat, lon, radius_nm) in &circles {
             let url = format!(
                 "{}/lat/{lat:.5}/lon/{lon:.5}/dist/{radius_nm:.0}",
                 self.base_url

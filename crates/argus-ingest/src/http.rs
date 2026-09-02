@@ -41,6 +41,19 @@ const USER_AGENT: &str = concat!(
 pub struct HttpClient {
     inner: reqwest::Client,
     max_bytes: usize,
+    /// One request-per-second budget per host, shared by every source that
+    /// happens to point at it.
+    ///
+    /// This lives here rather than in a driver because the thing that gets a
+    /// provider rate-limited is the *total* offered load, and no driver can see
+    /// that. Three separate 429s in one afternoon were all this shape: the
+    /// flights chain and the Europe sweep both reaching adsb.fi, each
+    /// individually polite and jointly over the line — and the chain answers a
+    /// 429 by sidelining a provider for fifteen minutes, so the cost of one
+    /// impolite burst is a quarter of an hour of missing coverage.
+    ///
+    /// Keyed by host, so pacing adsb.fi never delays a call to CelesTrak.
+    pacer: std::sync::Arc<governor::DefaultKeyedRateLimiter<String>>,
 }
 
 impl HttpClient {
@@ -72,6 +85,15 @@ impl HttpClient {
         Ok(Self {
             inner,
             max_bytes: DEFAULT_MAX_BYTES,
+            // One a second, which is what the community aggregators ask for and
+            // the strictest budget any provider here publishes. Sources that
+            // poll once a cadence never notice it; only a source issuing a
+            // burst — a tiled area sweep — is ever actually paced.
+            pacer: std::sync::Arc::new(governor::RateLimiter::keyed(
+                governor::Quota::per_second(
+                    std::num::NonZeroU32::new(1).expect("1 is not zero"),
+                ),
+            )),
         })
     }
 
@@ -88,6 +110,7 @@ impl HttpClient {
     /// The form values are never logged, here or in an error: they are the
     /// credentials themselves.
     pub async fn post_form(&self, url: &str, form: &[(&str, &str)]) -> Result<(), SourceError> {
+        self.pace(url).await;
         let response = self
             .inner
             .post(url)
@@ -107,9 +130,23 @@ impl HttpClient {
         Ok(())
     }
 
+    /// Wait until this host's budget allows another request.
+    ///
+    /// A URL with no host — which reqwest will reject anyway — is not paced;
+    /// inventing a key for it would put every malformed URL in the system into
+    /// one shared bucket.
+    async fn pace(&self, url: &str) {
+        if let Ok(parsed) = reqwest::Url::parse(url)
+            && let Some(host) = parsed.host_str()
+        {
+            self.pacer.until_key_ready(&host.to_string()).await;
+        }
+    }
+
     /// GET a URL, enforcing the size cap while the body streams rather than
     /// after it has already been buffered.
     pub async fn get_bytes(&self, url: &str) -> Result<Vec<u8>, SourceError> {
+        self.pace(url).await;
         let response = self
             .inner
             .get(url)

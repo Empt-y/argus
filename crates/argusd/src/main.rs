@@ -429,6 +429,45 @@ fn build_sources(
         // It also remains the fallback it used to be, and a better one: if both
         // aggregators die, what is left is a slower picture of the whole world
         // rather than a slower picture of one circle.
+        // The wide tier: Europe, swept slowly.
+        //
+        // Every AOI shares one source cadence, so putting a continent in the
+        // AOI list would drag the home area from a 20-second refresh to a
+        // minute-plus — paying for breadth everywhere with fidelity where it
+        // matters most. This is a separate source with its own region and its
+        // own cadence, so the two tiers do not compete.
+        //
+        // Europe tiles to 44 circles at 250 nm. `HttpClient` paces every host to
+        // one request a second, so that is a ~44-second poll however often it
+        // is scheduled — the cadence decides the *duty cycle*, not the burst.
+        //
+        // Ten minutes, arrived at by being told off twice. Three minutes meant
+        // 44 seconds of continuous requests out of every 180, which on top of
+        // the flights chain's own traffic was enough for adsb.fi to start
+        // refusing — and the chain answers a refusal by sidelining the provider
+        // for fifteen minutes, so pushing costs far more coverage than it buys.
+        // At ten minutes this is ~0.07 requests a second averaged, which is a
+        // fair thing to ask of a network that gives its data away.
+        //
+        // It runs against adsb.fi rather than adsb.lol so the two tiers lean on
+        // different receiver networks in normal operation.
+        sources.push(std::sync::Arc::new(
+            argus_ingest::sources::ReadsbProvider::wide(
+                http.clone(),
+                "adsb-fi-europe",
+                "Aircraft (adsb.fi, Europe sweep)",
+                "https://opendata.adsb.fi/api/v2",
+                argus_core::source::Attribution {
+                    provider: "adsb.fi".into(),
+                    url: "https://adsb.fi/".into(),
+                    license: "Open data — community-contributed receiver data".into(),
+                    notice: Some("Aircraft data from the adsb.fi community network".into()),
+                },
+                argus_core::BoundingBox::new(-11.0, 35.0, 32.0, 71.0),
+                600,
+            ),
+        ));
+
         sources.push(std::sync::Arc::new(argus_ingest::sources::OpenSky::new(
             http.clone(),
         )));
