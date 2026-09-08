@@ -24,7 +24,8 @@ use argus_core::source::{
     SourceDescriptor, SourceError, SourceId,
 };
 use chrono::{DateTime, Utc};
-use geo_types::{Coord, Geometry, LineString, MultiPolygon, Polygon};
+use crate::geojson::{self, GeoJsonGeometry};
+use geo_types::{Geometry, MultiPolygon, Polygon};
 use serde::Deserialize;
 
 const API_URL: &str = "https://api.weather.gov/alerts/active";
@@ -116,7 +117,7 @@ impl NwsAlerts {
                 match self.http.get_json::<ZoneFeature>(url).await {
                     Ok(zone) => {
                         fetched += 1;
-                        match zone.geometry.as_ref().and_then(convert_geometry) {
+                        match zone.geometry.as_ref().and_then(geojson::convert) {
                             Some(geometry) => {
                                 self.zones.put(&key, &geometry).await;
                                 collect_polygons(geometry, &mut polygons);
@@ -140,7 +141,7 @@ impl NwsAlerts {
                 continue;
             }
             let geometry = Geometry::MultiPolygon(MultiPolygon(polygons));
-            item.observation.position = polygon_centroid(&geometry)
+            item.observation.position = geojson::centroid(&geometry)
                 .map(|(lon, lat)| Position::surface(lon, lat));
             item.observation.geom = Some(geometry);
             if let Some(attrs) = item.observation.attrs.as_object_mut() {
@@ -215,14 +216,6 @@ struct Feature {
     id: Option<String>,
     geometry: Option<GeoJsonGeometry>,
     properties: Properties,
-}
-
-/// Only the shapes NWS actually emits for alerts.
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type")]
-enum GeoJsonGeometry {
-    Polygon { coordinates: Vec<Vec<[f64; 2]>> },
-    MultiPolygon { coordinates: Vec<Vec<Vec<[f64; 2]>>> },
 }
 
 #[derive(Debug, Deserialize)]
@@ -303,12 +296,12 @@ fn decode_feature(f: Feature, source_id: &SourceId) -> Option<Decoded> {
         .and_then(parse_time)
         .or_else(|| f.properties.onset.as_deref().and_then(parse_time))?;
 
-    let geometry = f.geometry.as_ref().and_then(convert_geometry);
+    let geometry = f.geometry.as_ref().and_then(geojson::convert);
 
     // An inline polygon is the exact area the office warned on, so it always
     // wins over the zone outlines — the zones are a coarser fallback for the
     // alerts that have no polygon at all.
-    let centroid = geometry.as_ref().and_then(polygon_centroid);
+    let centroid = geometry.as_ref().and_then(geojson::centroid);
     let zones = if geometry.is_some() {
         Vec::new()
     } else {
@@ -361,56 +354,6 @@ fn decode_feature(f: Feature, source_id: &SourceId) -> Option<Decoded> {
     })
 }
 
-fn ring(coords: &[[f64; 2]]) -> LineString<f64> {
-    LineString(coords.iter().map(|c| Coord { x: c[0], y: c[1] }).collect())
-}
-
-fn convert_geometry(g: &GeoJsonGeometry) -> Option<Geometry<f64>> {
-    match g {
-        GeoJsonGeometry::Polygon { coordinates } => {
-            let (outer, holes) = coordinates.split_first()?;
-            Some(Geometry::Polygon(Polygon::new(
-                ring(outer),
-                holes.iter().map(|h| ring(h)).collect(),
-            )))
-        }
-        GeoJsonGeometry::MultiPolygon { coordinates } => {
-            let polys: Vec<Polygon<f64>> = coordinates
-                .iter()
-                .filter_map(|rings| {
-                    let (outer, holes) = rings.split_first()?;
-                    Some(Polygon::new(
-                        ring(outer),
-                        holes.iter().map(|h| ring(h)).collect(),
-                    ))
-                })
-                .collect();
-            (!polys.is_empty()).then_some(Geometry::MultiPolygon(MultiPolygon(polys)))
-        }
-    }
-}
-
-/// Mean of the outer ring's vertices — a label anchor, not a true centroid.
-///
-/// Good enough to hang a marker on and far cheaper than an area-weighted
-/// centroid. It is deliberately not presented as the alert's location: the
-/// polygon is the alert.
-fn polygon_centroid(g: &Geometry<f64>) -> Option<(f64, f64)> {
-    let exterior = match g {
-        Geometry::Polygon(p) => p.exterior(),
-        Geometry::MultiPolygon(mp) => mp.0.first()?.exterior(),
-        _ => return None,
-    };
-    let pts: Vec<&Coord<f64>> = exterior.0.iter().collect();
-    if pts.is_empty() {
-        return None;
-    }
-    let n = pts.len() as f64;
-    let lon = pts.iter().map(|c| c.x).sum::<f64>() / n;
-    let lat = pts.iter().map(|c| c.y).sum::<f64>() / n;
-    Some((lon, lat))
-}
-
 fn parse_time(raw: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(raw.trim())
         .ok()
@@ -420,6 +363,7 @@ fn parse_time(raw: &str) -> Option<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use geo_types::{Coord, LineString};
 
     const FIXTURE: &str = include_str!("../../fixtures/nws_alerts.json");
 

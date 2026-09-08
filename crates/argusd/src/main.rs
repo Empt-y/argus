@@ -524,6 +524,26 @@ fn build_sources(
         )));
     }
 
+    // Environment Agency flood monitoring: warnings and gauges, from one API
+    // but as two sources. A warning is an area people act on; a gauge is one of
+    // 5,500 dots reporting a level. Different cadences, different layers, and a
+    // client wanting flood warnings should not have to take every stage reading
+    // in England with them.
+    if enabled("flood-warnings") {
+        // The store backs the area cache, so the 4,208 flood area outlines are
+        // fetched once in the life of the deployment rather than once per
+        // restart — the same reasoning as the NWS zone cache above.
+        sources.push(std::sync::Arc::new(
+            argus_ingest::sources::EaFloodWarnings::new(http.clone())
+                .with_area_cache(zone_cache.clone()),
+        ));
+    }
+    if enabled("river-gauges") {
+        sources.push(std::sync::Arc::new(
+            argus_ingest::sources::EaRiverGauges::new(http.clone()),
+        ));
+    }
+
     // Storm overflows. Nine water companies, nine separate sources into one
     // layer: they are disjoint regions rather than alternative providers of the
     // same data, so one company failing must not stop the other eight being

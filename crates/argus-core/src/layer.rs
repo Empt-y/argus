@@ -120,6 +120,23 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.min_zoom = 0;
         s.max_zoom = 10;
     }),
+    ("flood-warnings", |s| {
+        // An area layer whose meaning is its polygon, and wanted at the lowest
+        // zoom of anything here: a severe flood warning is the one thing on
+        // this map you want to see without having gone looking for it.
+        s.geometry = GeometryClass::Area;
+        s.color = "#2f80ed".into();
+        s.min_zoom = 0;
+        s.max_zoom = 12;
+    }),
+    ("river-gauges", |s| {
+        // Five and a half thousand points, so not below z7 — closer in than the
+        // outfalls, which are the layer people go looking for. Blue against the
+        // overflows' brown: the same rivers, measured rather than discharged
+        // into.
+        s.color = "#56ccf2".into();
+        s.min_zoom = 7;
+    }),
     ("storm-overflows", |s| {
         // Brown, and the one layer here where that is a description rather than
         // a palette choice. Visible from z5 because the question is regional —

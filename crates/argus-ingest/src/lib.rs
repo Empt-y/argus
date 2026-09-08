@@ -5,6 +5,7 @@
 //! outcomes into honest health states, and writes the results into the DVR.
 
 pub mod chain;
+pub mod geojson;
 pub mod http;
 pub mod runtime;
 pub mod scheduler;

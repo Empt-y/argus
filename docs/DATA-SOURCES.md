@@ -23,6 +23,8 @@ Kinds refer to `argus_core::EntityKind`.
 - **SondeHub radiosondes** — `sondehub.rs`, layer `radiosondes`. See below.
 - **Aviation hazards (SIGMET)** — `sigmet.rs`, layer `sigmets`.
 - **Storm overflows** — `stormoverflow.rs`, layer `storm-overflows`. See below.
+- **EA flood warnings + river gauges** — `eaflood.rs`, layers `flood-warnings`
+  and `river-gauges`. See below.
 
 ## A — verified, ready to build
 
@@ -98,11 +100,58 @@ each company by name and states the terms are the company's own rather than
 asserting an open licence the endpoint does not — confirm before publishing
 anything derived.
 
-### Environment Agency real-time flood monitoring
-`https://environment.data.gov.uk/flood-monitoring/id/floods`, `/id/stations`,
-`/data/readings?latest`. The response envelope self-declares OGL v3. Flood
-warnings carry real polygons; ~5,000 river, tide and rainfall gauges. Kinds:
-`event`, `station`, `measure`. England. Companion: the Hydrology API at
+### Environment Agency real-time flood monitoring — **built**
+`eaflood.rs`. Two sources from one API: `flood-warnings` (event) and
+`river-gauges` (station). **5,525 stations, 4,481 of them reporting a position
+and a current reading**, in two requests per poll.
+
+Built as two sources, not the three kinds the research note guessed. A gauge's
+readings are not `measure` entities — that kind is for a scalar not tied to a
+discrete object, and `EntityKind::Station` names "a river gauge" explicitly — so
+the level, flow and rainfall instruments ride as attributes on the station that
+houses them. Warnings and gauges are split because they want different cadences
+(5 min against 15) and are different layer toggles.
+
+What the live pull taught:
+
+- **The scalar-or-array trap, which is the big one.** This is JSON-LD flattened
+  to JSON and the flattening does not force cardinality: a field is a bare
+  scalar with one value and an *array* with two. `lat`/`long` are floats on
+  4,894 stations and an array on **one** (E85123, two positions 100 m apart).
+  `status`, `RLOIid`, `catchmentName`, `dateOpened` and `label` each do it on
+  one or two records; one reading of 5,347 has an array `value`. Declared as
+  `f64`, that single station fails — and since items arrive as one array, serde
+  fails the **whole document**: every river gauge in England lost to one station
+  that cannot make its mind up. Every varying field needs a `OneOrMany`. Same
+  lesson as the SIGMET null vertex: tolerance belongs at the smallest element.
+- **The gauges are not England only.** The Agency also publishes the National
+  Tide Gauge Network, which rings the whole UK — Aberdeen, Leith, Wick,
+  Ullapool, Tobermory, Portrush — 21 stations outside England, reaching Lerwick
+  at 60.15N. A live test asserting an England bounding box is what caught it.
+  Warnings genuinely are England only, so the two sources declare different
+  coverage.
+- **`/id/floodAreas` silently truncates to 500** of its 4,208 rows on a request
+  that looks identical to the one `/id/stations` answers in full at 5,525. Name
+  `_limit` explicitly on every list endpoint rather than learning which have a
+  default.
+- **Flood warning timestamps carry no timezone** (`2015-02-02T19:32:00`) where
+  readings do (`...Z`). The API documents them as UTC; read as local they would
+  be an hour out all summer.
+- **630 stations publish no position at all** and 47 readings were over 24 h
+  old, the oldest 29 days. Gauges with no position are skipped; stale ones are
+  left to the station horizon, which is the correct answer here — unlike the
+  storm overflow feeds, a reading's timestamp is unambiguously when the water
+  was measured.
+- **There were no flood warnings in force in England** when this was built, and
+  none at `min-severity=4` either, so the warning decoder is built against the
+  Agency's own published example. The live test asserts the shape of whatever
+  is in force rather than demanding warnings exist.
+- Flood area outlines are separate fetches (`/id/floodAreas/{code}/polygon`,
+  GeoJSON `FeatureCollection`). They are static, so they go through the same
+  `GeometryCache` the NWS driver uses for zone outlines, with a per-poll fetch
+  budget.
+
+Still unbuilt companion: the Hydrology API at
 `/hydrology/id/stations?observedProperty=groundwaterLevel` adds groundwater and
 offers native `.geojson`.
 
@@ -217,7 +266,7 @@ Easiest first, which is also roughly most-reusable first:
 2. ~~Aviation weather~~ — **SIGMETs done**; METAR still unbuilt.
 3. ~~Storm overflows~~ — **done**; nine feeds, two schemas, ~600 lines.
 4. NDBC buoys — one fixed-width file.
-5. EA flood monitoring — one driver yields three kinds.
+5. ~~EA flood monitoring~~ — **done**; two sources, not the three kinds guessed.
 6. Register for BODS, then build it.
 
 ## Process notes
@@ -231,6 +280,9 @@ Easiest first, which is also roughly most-reusable first:
   with no sewers, not like an error. `storm_overflow_live.rs` polls all nine
   companies behind `ARGUS_NETWORK_TESTS=1` and fails on a feed that has quietly
   become half a feed.
+- Check a field's *cardinality* across the whole layer, not its type in one
+  record. The EA API's scalar-or-array flattening shows up on one station in
+  five thousand and fails the entire document.
 - Check a timestamp field's *distribution*, not one record. Every trap in the
   storm overflow feeds — the bulk stamp, Northumbrian's per-record stamp, the
   603 empty end-dates against 36 live spills — was invisible in a sample and
