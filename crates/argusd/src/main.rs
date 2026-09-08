@@ -524,6 +524,16 @@ fn build_sources(
         )));
     }
 
+    // Storm overflows. Nine water companies, nine separate sources into one
+    // layer: they are disjoint regions rather than alternative providers of the
+    // same data, so one company failing must not stop the other eight being
+    // polled, and the health panel should name whichever is down.
+    if enabled("storm-overflows") {
+        for company in argus_ingest::sources::StormOverflows::all(http.clone()) {
+            sources.push(std::sync::Arc::new(company));
+        }
+    }
+
     // Radiosondes. Their own layer rather than joining `flights`: both are
     // EntityKind::Aircraft and reuse the same track machinery, but a weather
     // balloon and an airliner are different things to switch on and off, and

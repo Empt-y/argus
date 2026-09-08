@@ -13,6 +13,7 @@ pub mod nws;
 pub mod opensky;
 pub mod sigmet;
 pub mod sondehub;
+pub mod stormoverflow;
 pub mod readsb;
 pub mod usgs;
 
@@ -22,5 +23,6 @@ pub use nws::NwsAlerts;
 pub use opensky::OpenSky;
 pub use sigmet::Sigmets;
 pub use sondehub::SondeHub;
+pub use stormoverflow::StormOverflows;
 pub use readsb::ReadsbProvider;
 pub use usgs::UsgsEarthquakes;

@@ -21,27 +21,82 @@ Kinds refer to `argus_core::EntityKind`.
 ## Built
 
 - **SondeHub radiosondes** — `sondehub.rs`, layer `radiosondes`. See below.
+- **Aviation hazards (SIGMET)** — `sigmet.rs`, layer `sigmets`.
+- **Storm overflows** — `stormoverflow.rs`, layer `storm-overflows`. See below.
 
 ## A — verified, ready to build
 
-### Storm overflows / sewage discharge (UK water companies)
-One keyless ArcGIS FeatureServer per company. United Utilities:
-`https://services5.arcgis.com/5eoLvR0f8HKb7HWP/arcgis/rest/services/United_Utilities_Storm_Overflow_Activity/FeatureServer/0`
-— and equivalents for Thames (`services2.arcgis.com/g6o32ZDQ33GpCIu3`), Severn
-Trent (`services1.arcgis.com/NO7lTIlnxRMMG9Gw`), Anglian
-(`services3.arcgis.com/VCOY1atHWVcDlvlJ`), Yorkshire
-(`services-eu1.arcgis.com/1WqkK5cDKUbF0CkH`), Northumbrian
-(`services-eu1.arcgis.com/MSNNjkZ51iVh8yBj`), South West
-(`services-eu1.arcgis.com/OMdMOtfhATJPcHe3`), Wessex
-(`services.arcgis.com/3SZ6e0uCvPROr4mS`), Scottish Water
-(`services3.arcgis.com/Bb8lfThdhugyc4G3`).
+### Storm overflows / sewage discharge (UK water companies) — **built**
+`stormoverflow.rs`. Nine keyless ArcGIS FeatureServers, one per company,
+**15,273 outfalls** and 122 discharging on the live pull that verified it.
 
-`?where=1=1&outFields=*&f=geojson` verified. UU 2,252 outfalls, Thames 573;
-`where=Status=1` gave 5 UU outfalls discharging at the time of checking, with
-`LastUpdated` fifteen minutes old. Kind: `station` per outfall plus `event` per
-discharge. ~15-20k outfalls, poll 15 min. **Licence caveat**: the Stream portal
-asserts open terms but the FeatureServer's own `copyrightText` is empty —
-confirm before publishing anything derived.
+The service names are not derivable from the company name — South West Water
+publishes theirs as `NEH_outlets_PROD` and Anglian as
+`stream_service_outfall_locations_view`. The reliable way to find all nine is a
+title search against ArcGIS Online rather than browsing each org's service list:
+
+```sh
+curl -sG https://www.arcgis.com/sharing/rest/search \
+  --data-urlencode 'q=title:"Storm Overflow Activity"' --data-urlencode f=json
+```
+
+Eight companies publish the Water UK common model; **Scottish Water publishes
+its own schema entirely** — `ASSET_ID`, `STATUS_ID` (13 overflowing, 14 recent,
+15 none, 16 no data), ISO-8601 dates in *string* fields, plus asset names,
+licence numbers, overflow types and durations the others do not carry.
+
+What the live pull taught, none of which is visible from a single record:
+
+- **`f=geojson`, never `f=json`.** Scottish Water's layer is natively
+  EPSG:27700; `f=json` returns British National Grid eastings and northings
+  that deserialise perfectly and place every Scottish outfall in the Gulf of
+  Guinea. GeoJSON output makes the server reproject to WGS84.
+- **Page it.** The cap is 2,000 features, and 1,000 on Anglian's server. In
+  GeoJSON the `exceededTransferLimit` warning sits inside a `properties` object
+  that is *absent* on the last page, so the reliable stop is a short page. Order
+  by the object-id field or `resultOffset` silently skips and repeats rows —
+  and that field is `OBJECTID` on seven companies, `ObjectId` on the other two.
+- **South West Water uses lowerCamelCase** (`status`, `statusStart`,
+  `lastUpdated`) for the same common model everyone else spells in PascalCase.
+  Serde aliases absorb it; without them, 1,344 outfalls decode to nothing and
+  Devon looks like it has no sewers.
+- **`Status = -1` means the monitor is offline**, not that the outfall is clear.
+  460 outfalls nationally were in that state. Folding it into "not discharging"
+  would report a river as clean because nobody is watching it.
+- **The nine companies do not mean the same thing by `LastUpdated`**, and this
+  is the trap that cost the most. Seven stamp it in bulk when the feed is
+  republished — 2,251 of UU's 2,252 records carry one identical value, an hour
+  old — which makes it look like a free `observed_at`: the store's
+  `(kind, key, observed_at, source)` conflict key would then turn every poll
+  between republishes into no writes at all. **Northumbrian Water stamps each
+  record when that record last changed**: median eight days, oldest fifty-seven.
+  Dated by that field, 1,301 of its 1,575 outfalls fall outside the 24-hour
+  `Station` horizon and the whole North East silently leaves the map — with
+  every monitor working perfectly. `StatusStart` fails the same way and harder;
+  its values go back to 2024.
+
+  The driver therefore dates a station by **when it fetched the feed**, the one
+  instant all nine agree on, and carries the company's stamp as an attribute.
+  Where that stamp is older than the horizon — or the monitor reports offline —
+  the observation is marked `Quality::Stale`: still drawn, because a monitor
+  that stopped reporting is worth seeing, but never dressed as a live reading.
+  1,808 of 15,273 outfalls nationally, most of them Northumbrian's.
+
+  The cost is 15,300 rows a poll with no dedupe, four polls an hour. Against the
+  ADS-B layer's ~10,000 rows every fifteen seconds that is under three per cent
+  of what the store already absorbs — a fair price for not letting one field's
+  spelling decide whether a county exists.
+- **Scottish Water's empty `END_DATETIME` does not mean "still running".** 603
+  of 2,073 assets carry one while only 36 were overflowing. The status is the
+  only field that knows.
+- **Anglian publishes AWS00528 twice**, identical but for the object id, so the
+  natural key is the outfall id and never `OBJECTID`.
+
+**Licence caveat**: the Stream portal asserts open terms but not one of the nine
+FeatureServers carries a non-empty `copyrightText`. The driver therefore credits
+each company by name and states the terms are the company's own rather than
+asserting an open licence the endpoint does not — confirm before publishing
+anything derived.
 
 ### Environment Agency real-time flood monitoring
 `https://environment.data.gov.uk/flood-monitoring/id/floods`, `/id/stations`,
@@ -159,8 +214,8 @@ with a position and a clock, and that is a different kind of thing.
 Easiest first, which is also roughly most-reusable first:
 
 1. ~~SondeHub~~ — **done**; reused the aircraft track machinery verbatim.
-2. Aviation weather — SIGMET polygons and METAR land straight into existing kinds.
-3. Storm overflows — nine keyless GeoJSON fetches, high novelty per line.
+2. ~~Aviation weather~~ — **SIGMETs done**; METAR still unbuilt.
+3. ~~Storm overflows~~ — **done**; nine feeds, two schemas, ~600 lines.
 4. NDBC buoys — one fixed-width file.
 5. EA flood monitoring — one driver yields three kinds.
 6. Register for BODS, then build it.
@@ -171,3 +226,12 @@ Easiest first, which is also roughly most-reusable first:
   corrupt binary without it.
 - Assert on record counts, never on status codes. Three separate services here
   returned 200 with unusable bodies.
+- A paged API needs that assertion as a *test*, not just a spot check. A lost
+  page is a valid, decodable, silently short answer — it looks like a county
+  with no sewers, not like an error. `storm_overflow_live.rs` polls all nine
+  companies behind `ARGUS_NETWORK_TESTS=1` and fails on a feed that has quietly
+  become half a feed.
+- Check a timestamp field's *distribution*, not one record. Every trap in the
+  storm overflow feeds — the bulk stamp, Northumbrian's per-record stamp, the
+  603 empty end-dates against 36 live spills — was invisible in a sample and
+  obvious in a `groupByFieldsForStatistics` count over the whole layer.

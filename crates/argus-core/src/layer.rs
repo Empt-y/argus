@@ -120,6 +120,15 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.min_zoom = 0;
         s.max_zoom = 10;
     }),
+    ("storm-overflows", |s| {
+        // Brown, and the one layer here where that is a description rather than
+        // a palette choice. Visible from z5 because the question is regional —
+        // "is anything discharging into my river" is asked of a county, not a
+        // street — but not lower, because fifteen thousand outfalls at national
+        // zoom is a solid mass that says nothing.
+        s.color = "#a1683a".into();
+        s.min_zoom = 5;
+    }),
     ("radiosondes", |s| {
         // Aircraft-coloured by default, which would make a balloon
         // indistinguishable from an airliner. Cyan, and visible from further
