@@ -101,6 +101,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // authenticates with a session instead of a header. Separate on purpose:
     // a shared cookie jar lets one host's state follow requests to another.
     let session_http = argus_ingest::HttpClient::with_session(std::time::Duration::from_secs(30))?;
+    // A third client, for upstreams that are simply slow rather than large.
+    //
+    // The Environment Agency's flood API describes itself as a beta service and
+    // behaves like one: on back-to-back measurements, a 290-byte response to
+    // `/id/floods` took 12 seconds and then 45, and `readings?latest` took 35
+    // and then 64. That is server latency, not payload — no amount of asking
+    // for less makes it faster.
+    //
+    // Raising the shared 30-second timeout to suit it would slacken the guard
+    // on thirty other providers that answer in under a second, where a stall is
+    // the signal that something is wrong. So the patience is granted where it
+    // is needed and nowhere else.
+    let patient_http = argus_ingest::HttpClient::new(std::time::Duration::from_secs(120))?;
     let api_store = store.clone();
     let alert_store = store.clone();
     let runtime = argus_ingest::Runtime::new(
@@ -126,6 +139,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         &config,
         &http,
         &session_http,
+        &patient_http,
         std::sync::Arc::new(api_store.clone()),
         std::sync::Arc::new(api_store.clone()),
     ) {
@@ -353,6 +367,7 @@ fn build_sources(
     config: &Config,
     http: &argus_ingest::HttpClient,
     session_http: &argus_ingest::HttpClient,
+    patient_http: &argus_ingest::HttpClient,
     zone_cache: std::sync::Arc<dyn argus_core::GeometryCache>,
     catalogue: std::sync::Arc<dyn argus_core::TrackedCatalogue>,
 ) -> Vec<std::sync::Arc<dyn argus_core::Source>> {
@@ -534,13 +549,13 @@ fn build_sources(
         // fetched once in the life of the deployment rather than once per
         // restart — the same reasoning as the NWS zone cache above.
         sources.push(std::sync::Arc::new(
-            argus_ingest::sources::EaFloodWarnings::new(http.clone())
+            argus_ingest::sources::EaFloodWarnings::new(patient_http.clone())
                 .with_area_cache(zone_cache.clone()),
         ));
     }
     if enabled("river-gauges") {
         sources.push(std::sync::Arc::new(
-            argus_ingest::sources::EaRiverGauges::new(http.clone()),
+            argus_ingest::sources::EaRiverGauges::new(patient_http.clone()),
         ));
     }
 

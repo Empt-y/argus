@@ -280,6 +280,11 @@ Easiest first, which is also roughly most-reusable first:
   with no sewers, not like an error. `storm_overflow_live.rs` polls all nine
   companies behind `ARGUS_NETWORK_TESTS=1` and fails on a feed that has quietly
   become half a feed.
+- A live test that builds its own `HttpClient` does not test the daemon's. The
+  EA driver passed its live test with a 120-second client and then failed every
+  poll in `argusd`, whose shared client allows 30 — the Agency's beta service
+  answered a 290-byte request in 12 seconds one moment and 45 the next. Deploy
+  and read `sources.last_error` before believing a driver works.
 - Check a field's *cardinality* across the whole layer, not its type in one
   record. The EA API's scalar-or-array flattening shows up on one station in
   five thousand and fails the entire document.
