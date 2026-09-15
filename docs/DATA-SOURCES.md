@@ -1,337 +1,310 @@
-# Candidate data sources
+# Data sources
 
-Researched 2026-09-02. Every entry below was checked with a live request from
-this machine, and the *content* was inspected — not just the status code. That
-distinction is the whole discipline here: on the same day this was compiled, a
-tile provider returned HTTP 200 with a valid PNG that had "API KEY REQUIRED"
-stamped across the image, Cefas returned HTTP 200 with `text/html` and an
-Angular shell for three different "API" paths, and PSKReporter returned HTTP 200
-with a well-formed but completely empty envelope. **Record counts are the only
-assertion that catches those.**
+A log of every feed that has been checked for Argus: what it actually returns,
+what it cost to build, and what went wrong. Research started 2026-09-02; each
+entry was checked with a real request from this machine and the response body
+was inspected, not just the status code. That matters more than it sounds. On
+one day of research a tile provider returned HTTP 200 with a PNG that had "API
+KEY REQUIRED" drawn across it, Cefas returned 200 with an Angular shell for
+three different "API" paths, and PSKReporter returned 200 with a well-formed
+but empty envelope. Record counts are the only check that catches those.
 
-Constraints applied: personal, self-hosted, non-commercial. Keyless preferred, a
-free self-serve account acceptable, anything requiring approval, payment or
-**academic affiliation rejected** — see `REACH.md` for why OpenSky's registered
-tier is out of reach.
+Constraints: personal, self-hosted, non-commercial. Keyless is preferred, a
+free self-serve account is fine, and anything that needs approval, payment or
+an academic affiliation is out (see `REACH.md` for the OpenSky case).
 
-Kinds refer to `argus_core::EntityKind`.
-
----
+Entity kinds refer to `argus_core::EntityKind`.
 
 ## Built
 
-- **SondeHub radiosondes** — `sondehub.rs`, layer `radiosondes`. See below.
-- **Aviation hazards (SIGMET)** — `sigmet.rs`, layer `sigmets`.
-- **Storm overflows** — `stormoverflow.rs`, layer `storm-overflows`. See below.
-- **EA flood warnings + river gauges** — `eaflood.rs`, layers `flood-warnings`
-  and `river-gauges`. See below.
-- **NDBC buoys and coastal stations** — `ndbc.rs`, layer `buoys`. See below.
+| Layer | Driver | What it is |
+|---|---|---|
+| `flights` | `readsb.rs`, `opensky.rs` | ADS-B via adsb.lol → adsb.fi → OpenSky |
+| `satellites` | `celestrak.rs`, `spacetrack.rs` | TLEs propagated with SGP4 |
+| `earthquakes` | `usgs.rs`, `emsc.rs` | USGS → EMSC |
+| `weather-alerts` | `nws.rs` | US NWS alerts with zone polygons |
+| `sigmets` | `sigmet.rs` | Aviation hazard polygons, NOAA AWC |
+| `radiosondes` | `sondehub.rs` | Weather balloons, SondeHub |
+| `storm-overflows` | `stormoverflow.rs` | UK sewage discharge, nine water companies |
+| `flood-warnings` | `eaflood.rs` | Environment Agency flood warnings |
+| `river-gauges` | `eaflood.rs` | EA river, tide and rainfall gauges |
+| `buoys` | `ndbc.rs` | NOAA NDBC buoys and coastal stations |
 
-## A — verified, ready to build
+Notes on the ones that had something to teach follow.
 
-### Storm overflows / sewage discharge (UK water companies) — **built**
-`stormoverflow.rs`. Nine keyless ArcGIS FeatureServers, one per company,
-**15,273 outfalls** and 122 discharging on the live pull that verified it.
+### Storm overflows (UK water companies)
 
-The service names are not derivable from the company name — South West Water
-publishes theirs as `NEH_outlets_PROD` and Anglian as
-`stream_service_outfall_locations_view`. The reliable way to find all nine is a
-title search against ArcGIS Online rather than browsing each org's service list:
+Nine keyless ArcGIS FeatureServers, one per company. 15,273 outfalls, 122
+discharging on the pull that verified it.
+
+The service names aren't derivable from the company name (South West Water's
+is `NEH_outlets_PROD`, Anglian's is `stream_service_outfall_locations_view`).
+The reliable way to find all nine is a title search on ArcGIS Online:
 
 ```sh
 curl -sG https://www.arcgis.com/sharing/rest/search \
   --data-urlencode 'q=title:"Storm Overflow Activity"' --data-urlencode f=json
 ```
 
-Eight companies publish the Water UK common model; **Scottish Water publishes
-its own schema entirely** — `ASSET_ID`, `STATUS_ID` (13 overflowing, 14 recent,
-15 none, 16 no data), ISO-8601 dates in *string* fields, plus asset names,
-licence numbers, overflow types and durations the others do not carry.
+Eight companies use the Water UK common model. Scottish Water has its own
+schema: `ASSET_ID`, `STATUS_ID` (13 overflowing, 14 recent, 15 none, 16 no
+data), ISO dates in string fields, plus asset names, licence numbers and
+durations the others don't publish.
 
-What the live pull taught, none of which is visible from a single record:
+Things that only showed up on the full pull:
 
-- **`f=geojson`, never `f=json`.** Scottish Water's layer is natively
-  EPSG:27700; `f=json` returns British National Grid eastings and northings
-  that deserialise perfectly and place every Scottish outfall in the Gulf of
-  Guinea. GeoJSON output makes the server reproject to WGS84.
-- **Page it.** The cap is 2,000 features, and 1,000 on Anglian's server. In
-  GeoJSON the `exceededTransferLimit` warning sits inside a `properties` object
-  that is *absent* on the last page, so the reliable stop is a short page. Order
-  by the object-id field or `resultOffset` silently skips and repeats rows —
-  and that field is `OBJECTID` on seven companies, `ObjectId` on the other two.
-- **South West Water uses lowerCamelCase** (`status`, `statusStart`,
-  `lastUpdated`) for the same common model everyone else spells in PascalCase.
-  Serde aliases absorb it; without them, 1,344 outfalls decode to nothing and
-  Devon looks like it has no sewers.
-- **`Status = -1` means the monitor is offline**, not that the outfall is clear.
-  460 outfalls nationally were in that state. Folding it into "not discharging"
-  would report a river as clean because nobody is watching it.
-- **The nine companies do not mean the same thing by `LastUpdated`**, and this
-  is the trap that cost the most. Seven stamp it in bulk when the feed is
-  republished — 2,251 of UU's 2,252 records carry one identical value, an hour
-  old — which makes it look like a free `observed_at`: the store's
-  `(kind, key, observed_at, source)` conflict key would then turn every poll
-  between republishes into no writes at all. **Northumbrian Water stamps each
-  record when that record last changed**: median eight days, oldest fifty-seven.
-  Dated by that field, 1,301 of its 1,575 outfalls fall outside the 24-hour
-  `Station` horizon and the whole North East silently leaves the map — with
-  every monitor working perfectly. `StatusStart` fails the same way and harder;
-  its values go back to 2024.
+- Use `f=geojson`, not `f=json`. Scottish Water's layer is natively
+  EPSG:27700, and `f=json` returns British National Grid coordinates that
+  deserialise fine and put every Scottish outfall in the Gulf of Guinea.
+- Page it. The cap is 2,000 features (1,000 on Anglian). In GeoJSON the
+  `exceededTransferLimit` flag is inside a `properties` object that is absent
+  on the last page, so the reliable stop condition is a short page. Order by
+  the object id or `resultOffset` skips and repeats rows — and the id field is
+  `OBJECTID` on seven servers and `ObjectId` on two.
+- South West Water uses lowerCamelCase (`status`, `statusStart`) for the same
+  model everyone else spells in PascalCase. Without serde aliases, 1,344
+  outfalls decode to nothing and Devon appears to have no sewers.
+- `Status = -1` means the monitor is offline, not that the outfall is clear.
+  460 outfalls were in that state.
+- The companies don't agree on what `LastUpdated` means. Seven stamp every
+  record when the feed is republished (2,251 of United Utilities' 2,252 records
+  carry one identical value). Northumbrian stamps each record when *that
+  record* changed — median eight days old, oldest 57. Using it as
+  `observed_at` would put 1,301 of Northumbrian's 1,575 outfalls outside the
+  24-hour station horizon and take the North East off the map with every
+  monitor working. `StatusStart` is worse; its values go back to 2024.
 
-  The driver therefore dates a station by **when it fetched the feed**, the one
-  instant all nine agree on, and carries the company's stamp as an attribute.
-  Where that stamp is older than the horizon — or the monitor reports offline —
-  the observation is marked `Quality::Stale`: still drawn, because a monitor
-  that stopped reporting is worth seeing, but never dressed as a live reading.
-  1,808 of 15,273 outfalls nationally, most of them Northumbrian's.
+  So the driver dates a station by when it fetched the feed and carries the
+  company's stamp as an attribute. Where that stamp is older than the horizon,
+  or the monitor is offline, the observation is `Quality::Stale`: still drawn,
+  but not presented as a live reading. That's 1,808 of 15,273, mostly
+  Northumbrian's. The cost is 15,300 rows per poll with no dedupe, four polls
+  an hour — under 3% of what the ADS-B layer already writes.
+- Scottish Water's empty `END_DATETIME` doesn't mean "still running": 603 of
+  2,073 assets have one, 36 were overflowing. Only the status field knows.
+- Anglian publishes AWS00528 twice, differing only in object id. The natural
+  key is the outfall id.
 
-  The cost is 15,300 rows a poll with no dedupe, four polls an hour. Against the
-  ADS-B layer's ~10,000 rows every fifteen seconds that is under three per cent
-  of what the store already absorbs — a fair price for not letting one field's
-  spelling decide whether a county exists.
-- **Scottish Water's empty `END_DATETIME` does not mean "still running".** 603
-  of 2,073 assets carry one while only 36 were overflowing. The status is the
-  only field that knows.
-- **Anglian publishes AWS00528 twice**, identical but for the object id, so the
-  natural key is the outfall id and never `OBJECTID`.
+Licence: the Stream portal says open terms, but none of the nine servers has a
+non-empty `copyrightText`. The driver credits each company by name and states
+the terms are the company's own. Check before publishing anything derived.
 
-**Licence caveat**: the Stream portal asserts open terms but not one of the nine
-FeatureServers carries a non-empty `copyrightText`. The driver therefore credits
-each company by name and states the terms are the company's own rather than
-asserting an open licence the endpoint does not — confirm before publishing
-anything derived.
+### Environment Agency flood monitoring
 
-### Environment Agency real-time flood monitoring — **built**
-`eaflood.rs`. Two sources from one API: `flood-warnings` (event) and
-`river-gauges` (station). **5,525 stations, 4,481 of them reporting a position
-and a current reading**, in two requests per poll.
+Two sources from one API: `flood-warnings` (event) and `river-gauges`
+(station). 5,525 stations, 4,481 with both a position and a current reading,
+in two requests per poll.
 
-Built as two sources, not the three kinds the research note guessed. A gauge's
-readings are not `measure` entities — that kind is for a scalar not tied to a
-discrete object, and `EntityKind::Station` names "a river gauge" explicitly — so
-the level, flow and rainfall instruments ride as attributes on the station that
-houses them. Warnings and gauges are split because they want different cadences
-(5 min against 15) and are different layer toggles.
+Two sources rather than the three kinds originally guessed. A gauge's readings
+are not `measure` entities — that kind is for a scalar not tied to a discrete
+object — so level, flow and rainfall are attributes on the station. Warnings
+and gauges are separate sources because they want different cadences (5 min vs
+15) and are different things for a client to switch on.
 
-What the live pull taught:
-
-- **The scalar-or-array trap, which is the big one.** This is JSON-LD flattened
-  to JSON and the flattening does not force cardinality: a field is a bare
-  scalar with one value and an *array* with two. `lat`/`long` are floats on
-  4,894 stations and an array on **one** (E85123, two positions 100 m apart).
-  `status`, `RLOIid`, `catchmentName`, `dateOpened` and `label` each do it on
-  one or two records; one reading of 5,347 has an array `value`. Declared as
-  `f64`, that single station fails — and since items arrive as one array, serde
-  fails the **whole document**: every river gauge in England lost to one station
-  that cannot make its mind up. Every varying field needs a `OneOrMany`. Same
-  lesson as the SIGMET null vertex: tolerance belongs at the smallest element.
-- **The gauges are not England only.** The Agency also publishes the National
-  Tide Gauge Network, which rings the whole UK — Aberdeen, Leith, Wick,
-  Ullapool, Tobermory, Portrush — 21 stations outside England, reaching Lerwick
-  at 60.15N. A live test asserting an England bounding box is what caught it.
-  Warnings genuinely are England only, so the two sources declare different
+- The big one: the API is JSON-LD flattened to JSON, and the flattening
+  doesn't fix cardinality. A field is a bare scalar when there's one value and
+  an array when there are two. `lat`/`long` are floats on 4,894 stations and an
+  array on one (E85123, two positions 100 m apart). `status`, `RLOIid`,
+  `catchmentName`, `dateOpened` and `label` each do it on one or two records;
+  one reading in 5,347 has an array `value`. Declared as `f64`, that one
+  station fails to deserialise and takes the whole document with it. Every
+  field that can vary is a `OneOrMany`.
+- The gauges are not England only. The Agency also publishes the National Tide
+  Gauge Network, which covers the whole UK — 21 stations outside England,
+  reaching Lerwick at 60.15N. A live test asserting an England bbox caught
+  this. Warnings really are England only, so the two sources declare different
   coverage.
-- **`/id/floodAreas` silently truncates to 500** of its 4,208 rows on a request
-  that looks identical to the one `/id/stations` answers in full at 5,525. Name
-  `_limit` explicitly on every list endpoint rather than learning which have a
-  default.
-- **Flood warning timestamps carry no timezone** (`2015-02-02T19:32:00`) where
-  readings do (`...Z`). The API documents them as UTC; read as local they would
-  be an hour out all summer.
-- **630 stations publish no position at all** and 47 readings were over 24 h
-  old, the oldest 29 days. Gauges with no position are skipped; stale ones are
-  left to the station horizon, which is the correct answer here — unlike the
-  storm overflow feeds, a reading's timestamp is unambiguously when the water
-  was measured.
-- **There were no flood warnings in force in England** when this was built, and
-  none at `min-severity=4` either, so the warning decoder is built against the
-  Agency's own published example. The live test asserts the shape of whatever
-  is in force rather than demanding warnings exist.
-- Flood area outlines are separate fetches (`/id/floodAreas/{code}/polygon`,
-  GeoJSON `FeatureCollection`). They are static, so they go through the same
-  `GeometryCache` the NWS driver uses for zone outlines, with a per-poll fetch
-  budget.
+- `/id/floodAreas` silently truncates to 500 of its 4,208 rows on a request
+  that looks identical to the one `/id/stations` answers in full. Pass `_limit`
+  explicitly on every list endpoint.
+- Flood warning timestamps have no timezone (`2015-02-02T19:32:00`); readings
+  do. The docs say UTC. Read as local they'd be an hour out all summer.
+- 630 stations have no position and are skipped. 47 readings were over a day
+  old (oldest 29 days); those are left to the station horizon, which is right
+  here because a reading's timestamp really is when the water was measured.
+- No flood warnings were in force when this was built, so the warning decoder
+  is written against the Agency's published example. The live test checks the
+  shape of whatever is in force rather than requiring warnings to exist.
+- Flood area outlines are separate static fetches and go through the same
+  `GeometryCache` as NWS zones, with a per-poll budget.
+- The flood API is slow. `/id/floods` returned 290 bytes in 12 s and then 45 s;
+  `readings?latest` took 35 s and 64 s. That's server latency, not payload.
+  The daemon's shared HTTP client has a 30 s timeout, so these two sources get
+  their own 120 s client. The live test had passed with its own 120 s client
+  and then every poll in the daemon failed — see process notes.
 
-Still unbuilt companion: the Hydrology API at
+Not yet built: the Hydrology API at
 `/hydrology/id/stations?observedProperty=groundwaterLevel` adds groundwater and
-offers native `.geojson`.
+serves native GeoJSON.
 
-### NOAA National Data Buoy Center — **built**
-`https://www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt`, 876 stations in
-22 KB and 0.4 s, plus `data/stations/station_table.txt` for names and types,
-refreshed daily. Keyless, US public domain. Kind `station`; the readings ride
-as attributes, as on the river gauges. Layer `buoys`, one source.
+### NOAA NDBC buoys
 
-What the research note got wrong, measured on 2026-09-15:
+`data/latest_obs/latest_obs.txt` is the whole network in one 22 KB request,
+plus `data/stations/station_table.txt` for names and types (refreshed daily).
+Keyless, US public domain. 876 stations on 2026-09-15.
 
-- **Not fixed-width.** The header is laid out in columns but the values are
-  not: latitude has three decimals on 868 rows and two on 8, a temperature of
-  exactly 30 °C prints as `30`, and station ids run from four characters
-  (`CWCI`) to seven (`4403587`). Every row has exactly 22 whitespace-separated
-  fields, and that count is the contract.
-- **Not only buoys.** C-MAN coastal stations, NOS water level stations, NERRS
-  estuary sites, 63 Gulf of Mexico oil platforms under `K` call signs, Canadian
-  and Korean partner stations, 45 *drifting* buoys, and the Stratus mooring at
-  22°S. Extent is global — 71°N to 22°S, both sides of the antimeridian — even
-  if the density is American, so the source declares `Coverage::Global`.
-- **`MM` is the majority value in 11 of 14 measurement columns.** 840 of 876
-  stations report no tide, 832 no visibility. A station reporting one thing is
-  ordinary; one reporting nothing is skipped, like a gauge with no reading.
-- **The station table lowercases some ids** (`katp`, `0y2w3`) where the
-  observation file uppercases all of them. Case-folded, all 876 join; 148 table
-  rows have an empty name and fall back to the id. The table's `NOTE` column
-  carries "Data from this station are not quality controlled by NDBC" on the
-  platforms, which is kept as an attribute — and **341 of the 596 notes are
-  HTML fragments** (`<a href>` to a sister station, `<br>`, `<p>`), which
-  only showed up in the stored row, not in the sample. They are flattened to
-  text; the live test now refuses markup in any text attribute.
-- Stamps are UTC and hourly, most at :00 or :48–:50. The file is the *latest*
-  per station; the oldest row was 3.6 h old, 861 of 876 were within three
-  hours. The live test asserts that distribution, since a file that stops being
-  rebuilt would still decode perfectly.
+- Not fixed-width, despite how the header looks. Latitude has three decimals
+  on 868 rows and two on 8, a temperature of exactly 30 °C prints as `30`, and
+  ids run from four characters (`CWCI`) to seven (`4403587`). Every row has
+  exactly 22 whitespace-separated fields; that count is the contract, and a row
+  with any other count is counted as malformed rather than guessed at.
+- Not only buoys: C-MAN coastal stations, NOS water level stations, NERRS
+  estuary sites, 63 Gulf oil platforms under `K` call signs, Canadian and
+  Korean partner stations, 45 drifting buoys, and a mooring at 22°S. Extent is
+  71°N to 22°S across the antimeridian, so `Coverage::Global`.
+- `MM` (missing) is the majority value in 11 of 14 measurement columns. 840 of
+  876 stations report no tide, 832 no visibility. A station reporting one thing
+  is kept; one reporting nothing is skipped.
+- The station table lowercases some ids (`katp`, `0y2w3`); the observation
+  file uppercases all of them. Case-folded, all 876 join. 148 table rows have
+  no name and fall back to the id.
+- 341 of the 596 station notes are HTML fragments (`<a href>`, `<br>`, `<p>`).
+  This didn't show in the sample and did show in the stored row. They're
+  flattened to text, and the live test now rejects markup in any text
+  attribute.
+- Timestamps are UTC and hourly, mostly at :00 or :48–:50. The file is the
+  latest reading per station; 861 of 876 were within three hours, the oldest
+  was 3.6 h. The live test asserts that distribution, because a file that
+  stops being rebuilt still decodes perfectly.
 
-Units are kept as published and named in the keys — `wind_speed_ms`,
-`pressure_hpa`, `visibility_nmi`, `tide_ft` — rather than converted: a
-one-decimal reading in feet converted to metres prints precision the sensor
-never had.
+Units are kept as published and named in the attribute keys (`wind_speed_ms`,
+`pressure_hpa`, `visibility_nmi`, `tide_ft`). Converting a one-decimal reading
+in feet to metres would print precision the sensor doesn't have.
+
+## Verified, ready to build
 
 ### Open-Meteo (air quality, pollen, marine, flood)
 `air-quality-api.open-meteo.com/v1/air-quality`, `marine-api…/v1/marine`,
-`flood-api…/v1/flood`. Keyless, CC BY 4.0, explicitly non-commercial. Covers
-pollen, UV, wave height and GloFAS river discharge — four domains this plan
-misses, from one provider. Pollen is CAMS Europe only. Kind: `measure`.
+`flood-api…/v1/flood`. Keyless, CC BY 4.0, non-commercial. Pollen, UV, wave
+height and GloFAS river discharge from one provider. Pollen is CAMS Europe
+only. Kind `measure`.
 
-### wspr.live — HF propagation
+### wspr.live (HF propagation)
 `https://db1.wspr.live/?query=…` — ClickHouse over HTTP, keyless. 30,263 spots
-in a ten-minute window; each row has both transmitter and receiver coordinates,
-so it draws as a great-circle path. **~4.4M rows/day — must be filtered or
-aggregated server-side**, which the full ClickHouse dialect makes easy. Kind:
+in a ten-minute window, each with transmitter and receiver coordinates, so it
+draws as a great-circle path. About 4.4M rows a day, so it has to be filtered
+or aggregated server-side, which the ClickHouse dialect makes easy. Kind
 `event`.
 
-### NOAA Aviation Weather Center
-`https://aviationweather.gov/api/data/metar?bbox=49,-11,61,2&format=json` (60 UK
-stations, including RAF aerodromes), `/taf`, and `/isigmet` (146 active
-international SIGMETs, each with a polygon). Keyless, US public domain. Kinds:
-`station`+`measure`, and `event` for the hazard polygons.
+### NOAA Aviation Weather Center (METAR/TAF)
+`https://aviationweather.gov/api/data/metar?bbox=49,-11,61,2&format=json`
+gives 60 UK stations including RAF aerodromes; `/taf` likewise. SIGMETs from
+the same API are already built. Keyless, public domain. Kind `station`.
 
-### Elexon Insights + National Grid Carbon Intensity
-`https://data.elexon.co.uk/bmrs/api/v1/datasets/FUELINST` gives 5-minute GB fuel
-mix; `https://api.carbonintensity.org.uk/regional` gives 14 DNO regions with
-live generation mix. Both keyless, no registration at all. The UK counterpart to
-the planned ENTSO-E/EIA-930, at finer resolution. **Unresolved**: per-BM-unit
-output (B1610) returned an empty `data` array and its swagger is not at any
-standard path — plant-level generation needs more archaeology.
+### Elexon Insights and National Grid Carbon Intensity
+`https://data.elexon.co.uk/bmrs/api/v1/datasets/FUELINST` for 5-minute GB fuel
+mix; `https://api.carbonintensity.org.uk/regional` for 14 DNO regions with
+live generation mix. Both keyless. Unresolved: per-BM-unit output (B1610)
+returned an empty `data` array and its swagger isn't at any standard path.
 
-### Others verified keyless and ready
-- **data.police.uk** — street-level crime, OGL v3. Monthly with ~2-month lag and
-  locations snapped to anonymised "on or near" points; both facts must be
-  surfaced in the UI or it reads as precise when it is not. Kind `event`.
-- **Argo floats** — Ifremer ERDDAP `tabledap/ArgoFloats.json`. ~4,000 floats,
-  one profile per ~10 days. **Percent-encode `>` `<` `,` or Tomcat 400s.**
-- **SatNOGS** — 4,453 amateur ground stations plus observations joinable to the
-  existing satellite layer by `norad_cat_id`. CC BY-SA 4.0.
+### Others, verified keyless
+- **data.police.uk** — street-level crime, OGL v3. Monthly, ~2 month lag,
+  locations snapped to anonymised points; the UI needs to say both or it reads
+  as precise. Kind `event`.
+- **Argo floats** — Ifremer ERDDAP `tabledap/ArgoFloats.json`, ~4,000 floats,
+  one profile per ~10 days. Percent-encode `>` `<` `,` or Tomcat returns 400.
+- **SatNOGS** — 4,453 amateur ground stations plus observations, joinable to
+  the satellite layer by `norad_cat_id`. CC BY-SA 4.0.
 - **Global Meteor Network** — daily trajectory files, ~1,400 meteors/day, each
-  with begin/end lat/lon/height, i.e. a real 3D `event` LineString. CC BY 4.0.
-- **TfL Unified API** — keyless: line status, road disruptions (107 live), and
-  bus arrivals carrying vehicle registrations, which is a de-facto vehicle track
-  if polled by `vehicleId`. Greater London.
+  with begin/end lat/lon/height, i.e. a real 3D LineString. CC BY 4.0.
+- **TfL Unified API** — keyless line status, road disruptions (107 live), and
+  bus arrivals with vehicle registrations, which becomes a track if polled by
+  `vehicleId`. Greater London only.
 - **EMODnet Human Activities WFS** — offshore platforms and wind farms with
-  operator, status and capacity. Kind `feature`, European.
+  operator, status, capacity. Kind `feature`, European.
 - **FDSN station metadata** — Raspberry Shake (1,566 UK station-epochs) and
-  EarthScope. **`service.iris.edu` 307-redirects to `service.earthscope.org`;
-  follow redirects or you silently get nothing.** ORFEUS returns 204/404 for the
-  UK — do not use it.
-- **AERONET** — 1,674 aerosol sites. A 2026 query for one site returned only a
-  45-byte banner and no rows, so probe per-site before assuming currency.
-- **NASA JPL SSD/CNEOS** — fireballs carry lat/lon/altitude and are the only
-  spatial one; close approaches and Sentry risk are non-spatial side-panel data.
-- **PlanIt** — UK planning applications with point geometry and a state machine.
-  Date-bounded queries are the reliable form; bbox+recent timed out at 45s.
-- **UK retail fuel prices** — per-retailer JSON under the CMA scheme. Asda 790
-  sites updated today; **Applegreen's file was 18 months stale**, so check
-  `last_updated` per feed and mark stale ones.
-- **GBIF** — 1.37M GB occurrence records for 2026. Roughly half are CC BY-NC,
-  which suits this project but must be filtered if that ever changes.
-- **Others**: PSKReporter (filter by band/mode, *not* callsign — callsign
-  queries return an empty envelope), FSA food hygiene, Helioviewer (solar
-  imagery, `raster`), OurAirports (86,021 rows, public domain reference table),
-  Safecast (radiation, but London samples were over a year old), AuroraWatch UK,
-  NOAA CO-OPS tides (US only), OSM notes.
+  EarthScope. `service.iris.edu` 307-redirects to `service.earthscope.org`;
+  follow redirects or you silently get nothing. ORFEUS returns 204/404 for the
+  UK.
+- **AERONET** — 1,674 aerosol sites, but a 2026 query for one site returned a
+  45-byte banner and no rows. Probe per site before assuming currency.
+- **NASA JPL SSD/CNEOS** — fireballs have lat/lon/altitude; close approaches
+  and Sentry risk are non-spatial.
+- **PlanIt** — UK planning applications with point geometry. Date-bounded
+  queries work; bbox+recent timed out at 45 s.
+- **UK retail fuel prices** — per-retailer JSON under the CMA scheme. Asda's
+  790 sites were updated the same day; Applegreen's file was 18 months stale.
+  Check `last_updated` per feed.
+- **GBIF** — 1.37M GB occurrence records for 2026, about half CC BY-NC.
+- Also: PSKReporter (filter by band/mode; callsign queries return an empty
+  envelope), FSA food hygiene, Helioviewer (solar imagery), OurAirports
+  (86,021 rows, public domain), Safecast (radiation, but London samples were
+  over a year old), AuroraWatch UK, NOAA CO-OPS tides (US only), OSM notes.
 
-## B — promising, unverified
+## Promising, unverified
 
 - **UK Bus Open Data Service** — 401 without a key; registration is free and
-  self-serve. Live positions for every bus in England. **The biggest remaining
-  gap in the plan**, and one signup from being verifiable.
-- **openAIP** — airspace structure as `feature` polygons; free account, 403 seen.
+  self-serve. Live positions for every bus in England. The biggest remaining
+  gap, and one signup from being verifiable.
+- **openAIP** — airspace polygons; free account, 403 seen.
 - **National Highways DATEX II** — 401 "Invalid Subscription Key"; Azure APIM
-  free tier, likely self-serve. The legacy unauthenticated endpoints
-  (`trafficengland.com`, `m.highwaysengland.co.uk`) are **dead**.
-- **ONS Open Geography** — 3,904 keyless ArcGIS services (wards, constituencies,
-  LSOAs). The natural join surface for crime and planning data.
+  free tier, probably self-serve. The old unauthenticated endpoints
+  (`trafficengland.com`, `m.highwaysengland.co.uk`) are dead.
+- **ONS Open Geography** — 3,904 keyless ArcGIS services (wards,
+  constituencies, LSOAs). The natural join surface for crime and planning.
 - **Met Office DataHub** — free tier exists, but Open-Meteo covers it keyless.
 
-## C — checked and rejected
+## Checked and rejected
 
-Knowing a source is a dead end saves repeating the investigation.
-
-| Source | Verdict |
+| Source | Why |
 |---|---|
-| AviationAPI | **DNS does not resolve** — the OSINT index entry has rotted |
-| UK National Chargepoint Registry | **DNS returns no answer** — retired or moved |
+| AviationAPI | DNS doesn't resolve |
+| UK National Chargepoint Registry | DNS returns nothing; retired or moved |
 | Open Charge Map | 403, needs a key; static POIs with no live availability |
-| Global Fishing Watch | 401; tokens are request-and-approve, not self-serve |
-| APRS-IS direct | `# Login by user not allowed` — needs a real callsign. The planned SDR route sidesteps this |
-| Thames Water developer API | 504 three times, and needs client credentials — the ArcGIS route above gives Thames keyless and working |
-| Cefas WaveNet | Angular SPA; three "API" paths all returned the same 3,855-byte HTML shell with HTTP 200 |
+| Global Fishing Watch | 401; tokens are request-and-approve |
+| APRS-IS direct | `# Login by user not allowed` — needs a real callsign. The SDR route sidesteps this |
+| Thames Water developer API | 504 three times, and needs client credentials; the ArcGIS route works keyless |
+| Cefas WaveNet | Angular SPA; three "API" paths all returned the same 3,855-byte HTML with HTTP 200 |
 | EURDEP / JRC | 404; the real network is restricted to national authorities |
-| UK Street Manager | **DNS does not resolve**; permits are S3 bulk exports, not an API |
+| UK Street Manager | DNS doesn't resolve; permits are S3 bulk exports, not an API |
 | NSTA oil & gas | ArcGIS root 404s; EMODnet covers platforms anyway |
-| EAWS avalanche, Copernicus EMS, Aloft bird radar | 404 — paths moved, not relocated |
+| EAWS avalanche, Copernicus EMS, Aloft bird radar | 404 — paths moved |
 | SILSO sunspots | Works, but a single global scalar with no geometry |
-| wheretheiss.at | Works, but redundant — the CelesTrak/SGP4 pipeline already does 25544 better, offline |
-| ip-api, Mylnikov WiFi, and the OSINT index's geospatial section | Lookup services, not feeds: no enumerable population, no time dimension, and IP-derived coordinates are fiction at a city centroid |
+| wheretheiss.at | Works, but the CelesTrak/SGP4 pipeline already does 25544 offline |
+| ip-api, Mylnikov WiFi, the OSINT index's geospatial section | Lookup services, not feeds: no enumerable population, no time dimension, and IP-derived coordinates are a city centroid |
 
-The OSINT index yielded essentially nothing usable: almost every geospatial
-entry is a keyed geocoding, IP-lookup or AI-inference service. A map needs feeds
-with a position and a clock, and that is a different kind of thing.
+The OSINT index was essentially useless for this: almost every geospatial
+entry is a keyed geocoder, IP lookup or AI inference service. A map needs feeds
+with a position and a clock.
 
 ## Suggested order
 
-Easiest first, which is also roughly most-reusable first:
+Easiest first, roughly most reusable first:
 
-1. ~~SondeHub~~ — **done**; reused the aircraft track machinery verbatim.
-2. ~~Aviation weather~~ — **SIGMETs done**; METAR still unbuilt.
-3. ~~Storm overflows~~ — **done**; nine feeds, two schemas, ~600 lines.
-4. ~~NDBC buoys~~ — **done**; one whitespace-separated file, not fixed-width.
-5. ~~EA flood monitoring~~ — **done**; two sources, not the three kinds guessed.
+1. ~~SondeHub~~ — done; reused the aircraft track machinery.
+2. ~~Aviation weather~~ — SIGMETs done; METAR/TAF still to do.
+3. ~~Storm overflows~~ — done; nine feeds, two schemas.
+4. ~~NDBC buoys~~ — done.
+5. ~~EA flood monitoring~~ — done.
 6. Register for BODS, then build it.
 
 ## Process notes
 
-- Send `--compressed`. SondeHub's telemetry endpoint returns gzip and looks like
-  corrupt binary without it.
-- Assert on record counts, never on status codes. Three separate services here
-  returned 200 with unusable bodies.
-- A paged API needs that assertion as a *test*, not just a spot check. A lost
-  page is a valid, decodable, silently short answer — it looks like a county
-  with no sewers, not like an error. `storm_overflow_live.rs` polls all nine
-  companies behind `ARGUS_NETWORK_TESTS=1` and fails on a feed that has quietly
-  become half a feed.
-- A live test that builds its own `HttpClient` does not test the daemon's. The
-  EA driver passed its live test with a 120-second client and then failed every
-  poll in `argusd`, whose shared client allows 30 — the Agency's beta service
-  answered a 290-byte request in 12 seconds one moment and 45 the next. Deploy
-  and read `sources.last_error` before believing a driver works.
-- Check a field's *cardinality* across the whole layer, not its type in one
-  record. The EA API's scalar-or-array flattening shows up on one station in
-  five thousand and fails the entire document.
-- "Fixed-width" in a research note means "the header lined up in the
-  sample". NDBC's file has ragged decimals and ids from four to seven
-  characters; splitting on whitespace and holding the field *count* to 22 is
-  what survives that. A decoder cut at byte offsets would have read `4403587`'s
-  latitude as `7  46.5`.
-- Check a timestamp field's *distribution*, not one record. Every trap in the
+Things that have gone wrong more than once, in the order they were learned.
+
+- Send `--compressed`. SondeHub's telemetry endpoint returns gzip and looks
+  like corrupt binary without it.
+- Assert on record counts, never on status codes. Three services returned 200
+  with unusable bodies.
+- Make that assertion a test, not a spot check. A lost page is valid,
+  decodable and short — it looks like a county with no sewers, not an error.
+  `storm_overflow_live.rs` polls all nine companies behind
+  `ARGUS_NETWORK_TESTS=1` and fails on a feed that has quietly halved.
+- A live test with its own `HttpClient` isn't testing the daemon's. The EA
+  driver passed its live test with a 120 s client and then failed every poll
+  in `argusd`, whose shared client allows 30 s. Deploy and read
+  `sources.last_error` before believing a driver works.
+- Check a field's cardinality across the whole layer, not its type in one
+  record. The EA scalar-or-array flattening shows up on one station in five
+  thousand and fails the whole document.
+- Check a timestamp field's distribution, not one record. Every trap in the
   storm overflow feeds — the bulk stamp, Northumbrian's per-record stamp, the
-  603 empty end-dates against 36 live spills — was invisible in a sample and
-  obvious in a `groupByFieldsForStatistics` count over the whole layer.
+  603 empty end dates against 36 live spills — was invisible in a sample and
+  obvious in a `groupByFieldsForStatistics` count over the layer.
+- "Fixed-width" in a research note means "the header lined up in the sample".
+  NDBC's file has ragged decimals and ids from four to seven characters.
+  Splitting on whitespace and holding the field count to 22 survives that;
+  cutting at byte offsets would have read `4403587`'s latitude as `7  46.5`.
+- Look at what actually landed in the store. The NDBC live test passed with
+  HTML in the station notes because nothing asserted on the text; the stored
+  row is where it showed.

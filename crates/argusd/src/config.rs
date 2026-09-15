@@ -411,6 +411,18 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_example_config_parses_and_validates() {
+        // deploy/argus.example.toml is what a new install copies. Every source
+        // section in it must be one the daemon recognises.
+        let c: Config = toml::from_str(include_str!("../../../deploy/argus.example.toml"))
+            .expect("the example config should parse");
+        assert!(c.validate().is_ok());
+        for id in ["buoys", "river-gauges", "storm-overflows", "flights"] {
+            assert!(c.sources.contains_key(id), "example config lacks [sources.{id}]");
+        }
+    }
+
+    #[test]
     fn a_minimal_config_gets_safe_defaults() {
         let c = minimal();
         assert!(c.validate().is_ok());

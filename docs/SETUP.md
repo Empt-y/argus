@@ -1,6 +1,9 @@
-# Setting up the store on Gentoo
+# Setup
 
-Verified on `default/linux/amd64/23.0/systemd`, 2026-08-28.
+How the development machine was set up: the database on Gentoo, DNS, the
+provider chain config, and the Android toolchain. Verified on
+`default/linux/amd64/23.0/systemd`, 2026-08-28. Other distros will differ
+only in the package step.
 
 ## Packages
 
@@ -22,23 +25,23 @@ echo 'dev-db/timescaledb timescale' | sudo tee -a /etc/portage/package.license
 sudo emerge dev-db/postgresql:18 dev-db/postgis dev-db/timescaledb
 ```
 
-Three things here are easy to get wrong:
+Three things to watch:
 
 **`POSTGRES_TARGETS`.** The profile default is `postgres17`. Without the
-override, portage builds the extensions against 17 and installs a *second*
-PostgreSQL alongside the 18 you asked for.
+override, portage builds the extensions against 17 and installs a second
+PostgreSQL next to the 18 you asked for.
 
 **`proprietary-extensions`.** Off by default, which builds the Apache-2 subset
-of TimescaleDB. That subset has **no compression and no continuous
-aggregates** — the entire rollup ladder in `0002_timeseries.sql` fails to apply
-with `functionality not supported under the current "apache" license`. Those
-features are Timescale Community (TSL), which is free for self-hosted use and
-only forbids offering it as a managed database service. Enabling the flag
-requires accepting the `timescale` licence, hence the `package.license` line.
+of TimescaleDB. That subset has no compression and no continuous aggregates,
+so the rollups in `0002_timeseries.sql` fail with `functionality not supported
+under the current "apache" license`. Those features are Timescale Community
+(TSL), which is free for self-hosted use and only forbids offering it as a
+managed service. Enabling the flag means accepting the `timescale` licence,
+hence the `package.license` line.
 
-**Binary packages.** There is no binhost configured on a stock Gentoo install.
-Adding the official one turns `sci-libs/proj` (a 719 MB source download) and
-`geos` into instant binary merges:
+**Binary packages.** A stock Gentoo install has no binhost configured. Adding
+the official one turns `sci-libs/proj` (a 719 MB source download) and `geos`
+into quick binary merges:
 
 ```sh
 sudo mkdir -p /etc/portage/binrepos.conf
@@ -61,8 +64,8 @@ profile, so their USE flags do not match.
 sudo emerge --config dev-db/postgresql:18
 ```
 
-TimescaleDB must be preloaded, and it phones home unless told not to. In
-`/etc/postgresql-18/postgresql.conf`:
+TimescaleDB has to be preloaded, and it sends telemetry unless told not to.
+In `/etc/postgresql-18/postgresql.conf`:
 
 ```
 shared_preload_libraries = 'timescaledb'
@@ -95,14 +98,13 @@ ARGUS_TEST_DATABASE_URL=postgres://argus@localhost/argus_test cargo test --works
 
 ## DNS
 
-Argus resolves in-process via hickory rather than through glibc, because glibc
-walks `/etc/resolv.conf` serially: one blackholed nameserver listed first stalls
-*every* lookup for seconds before falling back. That was not hypothetical during
-development — `1.1.1.1` was unreachable on the build network and listed first,
-so each poll spent 5–15 s in DNS before timing out the connect.
+Argus resolves DNS in-process with hickory rather than through glibc, because
+glibc walks `/etc/resolv.conf` in order: one dead nameserver listed first
+stalls every lookup for seconds before it falls back. This actually happened
+during development — `1.1.1.1` was unreachable on the build network and listed
+first, so every poll spent 5–15 s in DNS before the connect even started.
 
-If lookups feel slow machine-wide, that is the shape of it. Check each
-nameserver individually rather than trusting that resolution "works":
+If lookups feel slow machine-wide, check each nameserver on its own:
 
 ```sh
 for ns in $(awk '/^nameserver/{print $2}' /etc/resolv.conf); do
@@ -113,21 +115,20 @@ done
 
 ## Provider chains
 
-Every free provider has a limit, and most layers can be served by more than one.
-A layer is therefore configured as a ranked chain rather than a single upstream:
+Every free provider has a limit, and most layers can be served by more than
+one, so a layer is configured as a ranked chain rather than a single upstream:
 
 ```
 flights: adsb.lol -> adsb.fi
 ```
 
-The chain is itself a `Source`, so the scheduler treats it exactly like any
-single driver. It sticks with whichever provider answered last rather than
-walking the chain each poll (that would spend the scarce primary allowance on
-liveness checks), but reaches back up every 30 minutes so a daily quota that
-resets at midnight is actually noticed.
+The chain is itself a `Source`, so the scheduler treats it like any single
+driver. It sticks with whichever provider answered last rather than walking the
+chain each poll (that would spend the primary's allowance on liveness checks),
+but retries from the top every 30 minutes so a daily quota that resets at
+midnight gets noticed.
 
-Failures are classified rather than lumped together, because "spent" and
-"broken" need different handling:
+Failures are classified, because "spent" and "broken" need different handling:
 
 | Failure | Effect |
 |---|---|
@@ -136,11 +137,10 @@ Failures are classified rather than lumped together, because "spent" and
 | Allowance spent | Skipped until the quota window rolls over |
 | Rejected credential, 403 on a keyed source, absent hardware | Marked unavailable; never retried on a timer |
 
-Providers declare their own allowance (`SourceDescriptor::quota`), including the
-cost per poll — OpenSky charges more credits for a global query than a bounded
-one, and a chain that assumes one-per-poll sails past the real limit. The
-allowance is charged *before* the call, since a request that times out still
-consumed it.
+Providers declare their own allowance (`SourceDescriptor::quota`), including
+the cost per poll — OpenSky charges more credits for a global query than a
+bounded one. The allowance is charged before the call, since a request that
+times out still used it.
 
 Each member gets its own row in `sources`, so `GET /v1/sources` shows which
 provider is carrying a layer and why the ones above it are not:
@@ -151,17 +151,18 @@ adsb-lol      flights     live      349    <- serving
 flights       flights     live      349    <- the chain
 ```
 
-`unknown` for a standby is deliberate: it has not answered, but nothing is
-wrong with it. That is a different thing from `live` with zero results.
+`unknown` for a standby is deliberate: it hasn't been asked, and nothing is
+wrong with it. That's different from `live` with zero results.
 
-**Adding a provider to a chain.** Implement `Source` as usual, then list it in
-the chain in preference order. Providers sharing a wire format should share a
-decoder — `sources/readsb.rs` serves adsb.lol, adsb.fi and, in Phase 10, a local
-dump1090 receiver, because a dongle on the roof is just another provider.
+To add a provider to a chain, implement `Source` as usual and list it in the
+chain in preference order. Providers sharing a wire format share a decoder —
+`sources/readsb.rs` serves adsb.lol, adsb.fi and, eventually, a local dump1090
+receiver.
 
 ## Android toolchain (Phase 5)
 
-Installed user-local, no system packages beyond the JDK Gentoo already had:
+Installed under the home directory; no system packages beyond the JDK that
+was already there:
 
 ```sh
 # Java: openjdk-bin-21 was already present. It is NOT the system VM (25 is), so
@@ -170,8 +171,8 @@ Installed user-local, no system packages beyond the JDK Gentoo already had:
 export JAVA_HOME=/opt/openjdk-bin-21
 export ANDROID_HOME="$HOME/Android/Sdk"
 
-# Command-line tools: take the archive named by Google's own manifest rather
-# than a URL from a blog post, and check the digest it publishes beside it.
+# Command-line tools: use the archive named in Google's own manifest and
+# check the digest published beside it.
 #   https://dl.google.com/android/repository/repository2-3.xml
 #   -> cmdline-tools;latest, revision 23.0
 curl -LO https://dl.google.com/android/repository/commandlinetools-linux-16111833_latest.zip
@@ -190,12 +191,11 @@ mv /tmp/cmdline/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
 About 485 MB installed. `--licenses` is gone in this revision and is no longer
 needed; the installer prints a warning if you pass it.
 
-Gradle is not installed system-wide on purpose — an Android project brings its
-own via the wrapper, and `local.properties` carries `sdk.dir` so nothing has to
-live in a shell profile.
+Gradle isn't installed system-wide — the project brings its own via the
+wrapper, and `local.properties` carries `sdk.dir` so nothing needs to be in a
+shell profile.
 
-**Verify it before trusting it.** That the files exist proves nothing; what
-matters is whether the JDK and the build tools agree:
+A quick check that the JDK and the build tools agree:
 
 ```sh
 echo 'public class Hello { public static void main(String[] a) {} }' > Hello.java
@@ -213,8 +213,8 @@ avdmanager create avd -n argus -k "system-images;android-35;default;x86_64" -d p
 Plain AOSP rather than a Google Play image: MapLibre needs no Google services,
 and the smaller image boots faster.
 
-**KVM.** The user must be in the `kvm` group or the emulator silently falls back
-to software rendering and is unusable. `usermod -aG kvm <user>` takes effect on
+**KVM.** The user has to be in the `kvm` group or the emulator silently falls
+back to software rendering and is unusable. `usermod -aG kvm <user>` takes effect on
 next login, so a running session needs `sg kvm -c '<command>'`:
 
 ```sh
@@ -222,20 +222,21 @@ sg kvm -c "$ANDROID_HOME/emulator/emulator -accel-check"   # -> "KVM ... is inst
 sg kvm -c "$ANDROID_HOME/emulator/emulator -avd argus -no-window -no-audio -gpu swiftshader_indirect"
 ```
 
-### Version notes, all read from registries rather than remembered
+### Version notes
 
-Gradle 9.7.1 · AGP 9.3.2 · Kotlin 2.4.10 · Compose BOM 2026.08.00 ·
-MapLibre Native 13.6.0. Two of these bite:
+Gradle 9.7.1, AGP 9.3.2, Kotlin 2.4.10, Compose BOM 2026.08.00, MapLibre
+Native 13.6.0 — all checked against the registries at the time. Two of these
+bite:
 
 * **AGP 9 has Kotlin support built in.** Applying `org.jetbrains.kotlin.android`
-  as well is not merely redundant, it fails the build outright: "The
+  as well fails the build: "The
   'org.jetbrains.kotlin.android' plugin is no longer required for Kotlin support
   since AGP 9.0". The Compose and serialization plugins are still applied.
 * **compileSdk must be 37**, not 35 or 36. Current Compose artifacts declare a
-  minimum compile API of 37 in their AAR metadata, and the check is fatal rather
-  than a warning. The package is `platforms;android-37.0` — `platforms;android-37`
-  does not exist and reports "not found", which reads like the platform is
-  unavailable when it is only named differently.
+  minimum compile API of 37 in their AAR metadata, and the check is fatal. The
+  package is `platforms;android-37.0` — `platforms;android-37` doesn't exist
+  and reports "not found", which looks like the platform is unavailable when
+  it's just named differently.
 
-`targetSdk` stays at 35 to match the emulator image; `compileSdk` may exceed the
-device API and does.
+`targetSdk` stays at 35 to match the emulator image; `compileSdk` can be
+higher than the device API.

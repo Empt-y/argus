@@ -7,7 +7,7 @@
   boundary and a bearer token rather than by transport encryption. That is a
   weaker claim than HTTPS and it is no longer necessary.
 
-  `tailscale serve` now terminates TLS for https://athena.tail1f65b0.ts.net with
+  `tailscale serve` now terminates TLS for https://<host>.<tailnet>.ts.net with
   a real certificate and proxies to argusd on loopback, so the address a phone
   actually uses — on the LAN, on mobile data, anywhere — is HTTPS. The blanket
   allowance bought nothing except the ability to misconfigure the app into

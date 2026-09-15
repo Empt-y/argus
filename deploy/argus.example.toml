@@ -21,7 +21,7 @@ auth = "loopback_exempt"
 # How clients reach this server. Used for the tile URLs in /v1/style.json and
 # for the pairing QR, so it must be an address a *phone* can resolve — the bind
 # address is right only while everything is on this machine. Defaults to bind.
-# public_url = "http://athena.tail-scale.ts.net:8787"
+# public_url = "https://<host>.<tailnet>.ts.net"
 
 [database]
 url = "postgres://argus@localhost/argus"
@@ -79,6 +79,30 @@ enabled = true
 # The full 16,469-object active catalogue is deliberately not the default — at a
 # 60-second propagation cadence it is ~23 million rows a day.
 
+# Keyless sources. Each is on by default; set enabled = false to drop a layer.
+# Chains (earthquakes, flights) are toggled by layer id, as above.
+[sources.nws-alerts]
+enabled = true    # US NWS weather alerts
+
+[sources.sigmets]
+enabled = true    # aviation hazard polygons, NOAA AWC
+
+[sources.radiosondes]
+enabled = true    # weather balloons, SondeHub
+
+[sources.storm-overflows]
+enabled = true    # UK sewage discharge, nine water companies
+
+[sources.flood-warnings]
+enabled = true    # Environment Agency, England
+
+[sources.river-gauges]
+enabled = true    # Environment Agency river, tide and rainfall gauges, UK
+
+[sources.buoys]
+enabled = true    # NOAA NDBC buoys and coastal stations
+
+# Keyed sources, off until a credential is supplied.
 [sources.aisstream]
 enabled = false
 # credentials = { api_key = "" }
