@@ -559,6 +559,15 @@ fn build_sources(
         ));
     }
 
+    // NDBC: the ocean's surface weather, from every buoy, platform and
+    // coastal station NOAA relays, in one 22 KB request. Global in extent if
+    // not in density.
+    if enabled("buoys") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::NdbcBuoys::new(
+            http.clone(),
+        )));
+    }
+
     // Storm overflows. Nine water companies, nine separate sources into one
     // layer: they are disjoint regions rather than alternative providers of the
     // same data, so one company failing must not stop the other eight being

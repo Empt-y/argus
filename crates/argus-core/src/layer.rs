@@ -137,6 +137,14 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#56ccf2".into();
         s.min_zoom = 7;
     }),
+    ("buoys", |s| {
+        // Under nine hundred points across every ocean, so visible from z3:
+        // the question is "what is the sea doing off this coast", which is
+        // asked at a regional scale. Teal, between the vessels' blue and the
+        // gauges' cyan — the same water, stood still and measured.
+        s.color = "#2dd4bf".into();
+        s.min_zoom = 3;
+    }),
     ("storm-overflows", |s| {
         // Brown, and the one layer here where that is a description rather than
         // a palette choice. Visible from z5 because the question is regional —

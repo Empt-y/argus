@@ -25,6 +25,7 @@ Kinds refer to `argus_core::EntityKind`.
 - **Storm overflows** — `stormoverflow.rs`, layer `storm-overflows`. See below.
 - **EA flood warnings + river gauges** — `eaflood.rs`, layers `flood-warnings`
   and `river-gauges`. See below.
+- **NDBC buoys and coastal stations** — `ndbc.rs`, layer `buoys`. See below.
 
 ## A — verified, ready to build
 
@@ -155,6 +156,45 @@ Still unbuilt companion: the Hydrology API at
 `/hydrology/id/stations?observedProperty=groundwaterLevel` adds groundwater and
 offers native `.geojson`.
 
+### NOAA National Data Buoy Center — **built**
+`https://www.ndbc.noaa.gov/data/latest_obs/latest_obs.txt`, 876 stations in
+22 KB and 0.4 s, plus `data/stations/station_table.txt` for names and types,
+refreshed daily. Keyless, US public domain. Kind `station`; the readings ride
+as attributes, as on the river gauges. Layer `buoys`, one source.
+
+What the research note got wrong, measured on 2026-09-15:
+
+- **Not fixed-width.** The header is laid out in columns but the values are
+  not: latitude has three decimals on 868 rows and two on 8, a temperature of
+  exactly 30 °C prints as `30`, and station ids run from four characters
+  (`CWCI`) to seven (`4403587`). Every row has exactly 22 whitespace-separated
+  fields, and that count is the contract.
+- **Not only buoys.** C-MAN coastal stations, NOS water level stations, NERRS
+  estuary sites, 63 Gulf of Mexico oil platforms under `K` call signs, Canadian
+  and Korean partner stations, 45 *drifting* buoys, and the Stratus mooring at
+  22°S. Extent is global — 71°N to 22°S, both sides of the antimeridian — even
+  if the density is American, so the source declares `Coverage::Global`.
+- **`MM` is the majority value in 11 of 14 measurement columns.** 840 of 876
+  stations report no tide, 832 no visibility. A station reporting one thing is
+  ordinary; one reporting nothing is skipped, like a gauge with no reading.
+- **The station table lowercases some ids** (`katp`, `0y2w3`) where the
+  observation file uppercases all of them. Case-folded, all 876 join; 148 table
+  rows have an empty name and fall back to the id. The table's `NOTE` column
+  carries "Data from this station are not quality controlled by NDBC" on the
+  platforms, which is kept as an attribute — and **341 of the 596 notes are
+  HTML fragments** (`<a href>` to a sister station, `<br>`, `<p>`), which
+  only showed up in the stored row, not in the sample. They are flattened to
+  text; the live test now refuses markup in any text attribute.
+- Stamps are UTC and hourly, most at :00 or :48–:50. The file is the *latest*
+  per station; the oldest row was 3.6 h old, 861 of 876 were within three
+  hours. The live test asserts that distribution, since a file that stops being
+  rebuilt would still decode perfectly.
+
+Units are kept as published and named in the keys — `wind_speed_ms`,
+`pressure_hpa`, `visibility_nmi`, `tide_ft` — rather than converted: a
+one-decimal reading in feet converted to metres prints precision the sensor
+never had.
+
 ### Open-Meteo (air quality, pollen, marine, flood)
 `air-quality-api.open-meteo.com/v1/air-quality`, `marine-api…/v1/marine`,
 `flood-api…/v1/flood`. Keyless, CC BY 4.0, explicitly non-commercial. Covers
@@ -186,8 +226,6 @@ standard path — plant-level generation needs more archaeology.
 - **data.police.uk** — street-level crime, OGL v3. Monthly with ~2-month lag and
   locations snapped to anonymised "on or near" points; both facts must be
   surfaced in the UI or it reads as precise when it is not. Kind `event`.
-- **NOAA NDBC** — `data/latest_obs/latest_obs.txt`, 884 buoys, fixed-width.
-  Wave height, period, SST, pressure. Kind `station`+`measure`.
 - **Argo floats** — Ifremer ERDDAP `tabledap/ArgoFloats.json`. ~4,000 floats,
   one profile per ~10 days. **Percent-encode `>` `<` `,` or Tomcat 400s.**
 - **SatNOGS** — 4,453 amateur ground stations plus observations joinable to the
@@ -265,7 +303,7 @@ Easiest first, which is also roughly most-reusable first:
 1. ~~SondeHub~~ — **done**; reused the aircraft track machinery verbatim.
 2. ~~Aviation weather~~ — **SIGMETs done**; METAR still unbuilt.
 3. ~~Storm overflows~~ — **done**; nine feeds, two schemas, ~600 lines.
-4. NDBC buoys — one fixed-width file.
+4. ~~NDBC buoys~~ — **done**; one whitespace-separated file, not fixed-width.
 5. ~~EA flood monitoring~~ — **done**; two sources, not the three kinds guessed.
 6. Register for BODS, then build it.
 
@@ -288,6 +326,11 @@ Easiest first, which is also roughly most-reusable first:
 - Check a field's *cardinality* across the whole layer, not its type in one
   record. The EA API's scalar-or-array flattening shows up on one station in
   five thousand and fails the entire document.
+- "Fixed-width" in a research note means "the header lined up in the
+  sample". NDBC's file has ragged decimals and ids from four to seven
+  characters; splitting on whitespace and holding the field *count* to 22 is
+  what survives that. A decoder cut at byte offsets would have read `4403587`'s
+  latitude as `7  46.5`.
 - Check a timestamp field's *distribution*, not one record. Every trap in the
   storm overflow feeds — the bulk stamp, Northumbrian's per-record stamp, the
   603 empty end-dates against 36 live spills — was invisible in a sample and
