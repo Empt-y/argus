@@ -32,6 +32,7 @@ Entity kinds refer to `argus_core::EntityKind`.
 | `metars` | `metar.rs` | Aerodrome METARs with TAFs, NOAA AWC bulk cache |
 | `buses` | `bods.rs` | Every bus in England, Bus Open Data Service |
 | `argo-floats` | `argo.rs` | Argo profiling floats, latest surfacing |
+| `meteors` | `gmn.rs` | Global Meteor Network trajectories |
 
 Notes on the ones that had something to teach follow.
 
@@ -189,6 +190,19 @@ draws as a great-circle path. About 4.4M rows a day, so it has to be filtered
 or aggregated server-side, which the ClickHouse dialect makes easy. Kind
 `event`.
 
+### Global Meteor Network — done
+`traj_summary_data/daily/`: one semicolon-separated file per solar-longitude
+day (04:00 to 04:00 UTC), 86 columns, 4,031 trajectories on a September
+night — three times the note's estimate. Aliases `latest_daily` (the day
+being built, eight rows at 06:00) and `yesterday` (the last complete day,
+which is the file dated *two* days back). Lines end `\n\r`, newline then
+carriage return; untrimmed, the header is never found and a file decodes to
+nothing. Columns read by header name, sigmas skipped. First poll backfills
+the event horizon from the directory index, which is 386 KB and once took
+the server over thirty seconds — patient client. Kind `event` with a
+LineString from ignition to extinction; heights in attrs because the store's
+geometry is 2D. Layer `meteors`.
+
 ### Argo floats — done
 Ifremer ERDDAP `tabledap/ArgoFloats.json`. 4,315 floats reported in thirty
 days; the layer is each float's latest surfacing. Profile-level columns with
@@ -247,8 +261,6 @@ returned an empty `data` array and its swagger isn't at any standard path.
   as precise. Kind `event`.
 - **SatNOGS** — 4,453 amateur ground stations plus observations, joinable to
   the satellite layer by `norad_cat_id`. CC BY-SA 4.0.
-- **Global Meteor Network** — daily trajectory files, ~1,400 meteors/day, each
-  with begin/end lat/lon/height, i.e. a real 3D LineString. CC BY 4.0.
 - **TfL Unified API** — keyless line status, road disruptions (107 live), and
   bus arrivals with vehicle registrations, which becomes a track if polled by
   `vehicleId`. Greater London only.
@@ -317,8 +329,9 @@ Easiest first, roughly most reusable first:
 5. ~~EA flood monitoring~~ — done.
 6. ~~BODS~~ — done; the numbered list is finished.
 7. ~~Argo floats~~ — done.
-8. Next candidates from the keyless list: Global Meteor Network, SatNOGS,
-   TfL road disruptions, Elexon/carbon intensity, Open-Meteo.
+8. ~~Global Meteor Network~~ — done.
+9. Next candidates from the keyless list: SatNOGS, TfL road disruptions,
+   Elexon/carbon intensity, Open-Meteo, EMODnet, FDSN.
 
 ## Process notes
 
@@ -368,6 +381,9 @@ Things that have gone wrong more than once, in the order they were learned.
   are stamped an hour in the future and look newer than every edit. A
   `find target -newermt "$(date)" -exec touch -d '3 hours ago' {} +` is
   cheaper than `cargo clean`.
+- Look at line endings in a hex dump, not a terminal. GMN's files end every
+  line `\n\r`; `head` shows a clean file and `str::lines` hands back lines
+  that begin with `\r`, which fail every `starts_with`.
 - The machine's own clock is an input. Every station layer read as `delayed`
   by about an hour on the day METARs were built, and the cause was Athena
   running 59 minutes ahead with NTP off, not the feeds. Check `date -u`

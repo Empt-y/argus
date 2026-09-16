@@ -575,6 +575,18 @@ fn build_sources(
         ));
     }
 
+    // Meteors: every trajectory the Global Meteor Network solved, from its
+    // daily files. Events with a line on the ground; a week of them on a
+    // fresh start, today and yesterday thereafter. The patient client: the
+    // directory listing the backfill reads is 386 KB of thousands of file
+    // names and the server took over thirty seconds to produce it once in
+    // three tries, where the files themselves arrive in two.
+    if enabled("meteors") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::GmnMeteors::new(
+            patient_http.clone(),
+        )));
+    }
+
     // Argo: the last surfacing of every profiling float in the global array.
     // The patient client, because ERDDAP takes twenty seconds to answer a
     // thirty-day profile-level query and the shared client allows thirty.

@@ -138,6 +138,16 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#56ccf2".into();
         s.min_zoom = 7;
     }),
+    ("meteors", |s| {
+        // A line from where it lit to where it went out, ten kilometres at
+        // the median, so a line layer; and four thousand a night worldwide,
+        // so from z2 — the question is where the network saw the sky fall
+        // last night, asked of a continent. A pale gold streak.
+        s.geometry = GeometryClass::Line;
+        s.color = "#ffe08a".into();
+        s.min_zoom = 2;
+        s.max_zoom = 12;
+    }),
     ("argo-floats", |s| {
         // Four thousand across every ocean and nowhere dense, so from z2:
         // the question is what the array looks like, which is asked of a

@@ -105,6 +105,9 @@ enabled = true    # NOAA NDBC buoys and coastal stations
 [sources.argo-floats]
 enabled = true    # Argo profiling floats, last surfacing of each, hourly
 
+[sources.meteors]
+enabled = true    # Global Meteor Network trajectories, a week on first start
+
 [sources.metars]
 enabled = true    # Aerodrome METARs and TAFs, worldwide, from the AWC bulk cache
 
