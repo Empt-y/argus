@@ -7,6 +7,7 @@
 
 pub mod argo;
 pub mod bods;
+pub mod carbon;
 pub mod eaflood;
 pub mod elements;
 pub mod spacetrack;
@@ -27,6 +28,7 @@ pub mod usgs;
 
 pub use argo::ArgoFloats;
 pub use bods::Buses;
+pub use carbon::CarbonIntensity;
 pub use celestrak::CelestrakSatellites;
 pub use eaflood::{EaFloodWarnings, EaRiverGauges};
 pub use emsc::EmscEarthquakes;

@@ -168,6 +168,96 @@ fn merc_y_to_lat(y: f64) -> f64 {
     (std::f64::consts::PI * y).sinh().atan().to_degrees()
 }
 
+/// British National Grid (EPSG:27700, OSGB36 on the Airy 1830 ellipsoid) to
+/// WGS-84 longitude and latitude.
+///
+/// Two steps: the inverse Transverse Mercator projection to OSGB36
+/// geodetic coordinates, then a seven-parameter Helmert transformation to
+/// WGS-84 via geocentric coordinates. Ordnance Survey's own guide gives the
+/// parameters; the Helmert step is accurate to about five metres across
+/// Great Britain, which is the difference between a region boundary and a
+/// property boundary and is fine for the former. Several UK public feeds
+/// serve grid coordinates, and read as degrees they put Scotland in the Gulf
+/// of Guinea.
+pub fn bng_to_wgs84(easting: f64, northing: f64) -> (f64, f64) {
+    // Airy 1830.
+    let a = 6_377_563.396;
+    let b = 6_356_256.909;
+    let f0 = 0.999_601_271_7;
+    let (lat0, lon0) = (49.0_f64.to_radians(), (-2.0_f64).to_radians());
+    let (n0, e0) = (-100_000.0, 400_000.0);
+    let e2 = 1.0 - (b * b) / (a * a);
+    let n = (a - b) / (a + b);
+
+    // Iterate the meridional arc to find the footpoint latitude.
+    let mut lat = lat0;
+    let mut m = 0.0;
+    loop {
+        lat += (northing - n0 - m) / (a * f0);
+        let (n2, n3) = (n * n, n * n * n);
+        let ma = (1.0 + n + 1.25 * n2 + 1.25 * n3) * (lat - lat0);
+        let mb = (3.0 * n + 3.0 * n2 + 2.625 * n3) * (lat - lat0).sin() * (lat + lat0).cos();
+        let mc = (1.875 * n2 + 1.875 * n3) * (2.0 * (lat - lat0)).sin() * (2.0 * (lat + lat0)).cos();
+        let md = 35.0 / 24.0 * n3 * (3.0 * (lat - lat0)).sin() * (3.0 * (lat + lat0)).cos();
+        m = b * f0 * (ma - mb + mc - md);
+        if (northing - n0 - m).abs() < 0.000_01 {
+            break;
+        }
+    }
+
+    let (sin_lat, cos_lat, tan_lat) = (lat.sin(), lat.cos(), lat.tan());
+    let nu = a * f0 / (1.0 - e2 * sin_lat * sin_lat).sqrt();
+    let rho = a * f0 * (1.0 - e2) / (1.0 - e2 * sin_lat * sin_lat).powf(1.5);
+    let eta2 = nu / rho - 1.0;
+    let (tan2, tan4) = (tan_lat * tan_lat, tan_lat.powi(4));
+    let (nu3, nu5, nu7) = (nu.powi(3), nu.powi(5), nu.powi(7));
+
+    let vii = tan_lat / (2.0 * rho * nu);
+    let viii = tan_lat / (24.0 * rho * nu3) * (5.0 + 3.0 * tan2 + eta2 - 9.0 * tan2 * eta2);
+    let ix = tan_lat / (720.0 * rho * nu5) * (61.0 + 90.0 * tan2 + 45.0 * tan4);
+    let x = 1.0 / (cos_lat * nu);
+    let xi = 1.0 / (cos_lat * 6.0 * nu3) * (nu / rho + 2.0 * tan2);
+    let xii = 1.0 / (cos_lat * 120.0 * nu5) * (5.0 + 28.0 * tan2 + 24.0 * tan4);
+    let xiia = 1.0 / (cos_lat * 5040.0 * nu7) * (61.0 + 662.0 * tan2 + 1320.0 * tan4 + 720.0 * tan2 * tan4);
+
+    let de = easting - e0;
+    let (de2, de3, de4, de5, de6, de7) = (de * de, de.powi(3), de.powi(4), de.powi(5), de.powi(6), de.powi(7));
+    let lat_osgb = lat - vii * de2 + viii * de4 - ix * de6;
+    let lon_osgb = lon0 + x * de - xi * de3 + xii * de5 - xiia * de7;
+
+    // OSGB36 geodetic to geocentric, Helmert to WGS-84, back to geodetic.
+    let (sin_lat, cos_lat) = (lat_osgb.sin(), lat_osgb.cos());
+    let nu = a / (1.0 - e2 * sin_lat * sin_lat).sqrt();
+    let x1 = nu * cos_lat * lon_osgb.cos();
+    let y1 = nu * cos_lat * lon_osgb.sin();
+    let z1 = (1.0 - e2) * nu * sin_lat;
+
+    // OSGB36 → WGS84: the inverse of the published WGS84 → OSGB36 set.
+    let (tx, ty, tz) = (446.448, -125.157, 542.060);
+    let (rx, ry, rz) = (
+        (0.1502 / 3600.0_f64).to_radians(),
+        (0.2470 / 3600.0_f64).to_radians(),
+        (0.8421 / 3600.0_f64).to_radians(),
+    );
+    let sc = 1.0 + (-20.4894 * 1e-6);
+    let x2 = tx + sc * x1 - rz * y1 + ry * z1;
+    let y2 = ty + rz * x1 + sc * y1 - rx * z1;
+    let z2 = tz - ry * x1 + rx * y1 + sc * z1;
+
+    // GRS80 / WGS-84.
+    let a = 6_378_137.0;
+    let b = 6_356_752.314_2;
+    let e2 = 1.0 - (b * b) / (a * a);
+    let p = (x2 * x2 + y2 * y2).sqrt();
+    let mut lat = (z2 / (p * (1.0 - e2))).atan();
+    for _ in 0..10 {
+        let nu = a / (1.0 - e2 * lat.sin() * lat.sin()).sqrt();
+        lat = ((z2 + e2 * nu * lat.sin()) / p).atan();
+    }
+    let lon = y2.atan2(x2);
+    (lon.to_degrees(), lat.to_degrees())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,6 +330,24 @@ mod tests {
         let (_, lon) = destination(0.0, 179.9, 90.0, 50_000.0);
         assert!((-180.0..=180.0).contains(&lon), "lon escaped range: {lon}");
         assert!(lon < 0.0, "should have wrapped to negative, got {lon}");
+    }
+
+    #[test]
+    fn the_airy_transit_circle_lands_a_hundred_metres_east_of_the_wgs84_meridian() {
+        // Greenwich Observatory's transit circle is at 0° in OSGB36 by
+        // definition and about 102 m east of 0° in WGS-84 — one of the
+        // best-known facts about the two datums. Ordnance Survey's worked
+        // example for the same point: E 538 890, N 177 320.
+        let (lon, lat) = bng_to_wgs84(538_890.0, 177_320.0);
+        assert!((lon - -0.0015).abs() < 0.0005, "lon {lon}");
+        assert!((lat - 51.4778).abs() < 0.0005, "lat {lat}");
+
+        // Ordnance Survey's worked inverse example, Caister water tower:
+        // E 651 409.903, N 313 177.270 is 52°39′27.2531″N 1°43′4.5177″E in
+        // OSGB36; in WGS-84 it moves roughly 0.0015° north and 0.0012° west.
+        let (lon, lat) = bng_to_wgs84(651_409.903, 313_177.270);
+        assert!((lat - 52.6577).abs() < 0.001, "lat {lat}");
+        assert!((lon - 1.7168).abs() < 0.001, "lon {lon}");
     }
 
     #[test]

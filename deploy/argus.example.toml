@@ -114,6 +114,9 @@ enabled = true    # SatNOGS ground stations and what each is listening to
 [sources.road-disruptions]
 enabled = true    # Transport for London road disruptions, Greater London
 
+[sources.carbon-intensity]
+enabled = true    # Grid carbon intensity by DNO region, on real boundaries
+
 [sources.metars]
 enabled = true    # Aerodrome METARs and TAFs, worldwide, from the AWC bulk cache
 

@@ -575,6 +575,17 @@ fn build_sources(
         ));
     }
 
+    // Carbon intensity of the grid, by DNO region, on the regions' real
+    // boundaries. The store backs the boundary cache so the 3 MB licence-area
+    // file is fetched once in the life of the deployment, as for the flood
+    // areas and the NWS zones.
+    if enabled("carbon-intensity") {
+        sources.push(std::sync::Arc::new(
+            argus_ingest::sources::CarbonIntensity::new(http.clone())
+                .with_area_cache(zone_cache.clone()),
+        ));
+    }
+
     // TfL: disruptions on London's red routes, dated by their last update
     // so a month of roadworks stays on the map while TfL keeps touching it.
     if enabled("road-disruptions") {

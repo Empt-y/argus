@@ -35,6 +35,7 @@ Entity kinds refer to `argus_core::EntityKind`.
 | `meteors` | `gmn.rs` | Global Meteor Network trajectories |
 | `ground-stations` | `satnogs.rs` | SatNOGS stations and what each is listening to |
 | `road-disruptions` | `tfl.rs` | TfL road disruptions, Greater London |
+| `carbon-intensity` | `carbon.rs` | Grid carbon intensity on DNO boundaries |
 
 Notes on the ones that had something to teach follow.
 
@@ -272,11 +273,21 @@ Served as `application/octet-stream` with no `Content-Encoding`, so the HTTP
 layer does not inflate them; the driver does. Keyless, public domain. Kind
 `station`, layer `metars`, global.
 
-### Elexon Insights and National Grid Carbon Intensity
-`https://data.elexon.co.uk/bmrs/api/v1/datasets/FUELINST` for 5-minute GB fuel
-mix; `https://api.carbonintensity.org.uk/regional` for 14 DNO regions with
-live generation mix. Both keyless. Unresolved: per-BM-unit output (B1610)
-returned an empty `data` array and its swagger isn't at any standard path.
+### Carbon intensity by DNO region — done
+`api.carbonintensity.org.uk/regional`: 14 regions plus four aggregates,
+half-hourly forecast intensity and a nine-fuel mix, no geometry. The
+boundaries are NESO's "GIS Boundaries for GB DNO Licence Areas" GeoJSON
+(3 MB, EPSG:27700 — `argus_core::geo::bng_to_wgs84` converts, ~5 m), cached
+in `reference_geometry`. The two id numberings are joined by a hand table in
+`carbon.rs`. Kind `measure`, layer `carbon-intensity`, dated by the period
+so repeat polls write nothing — which also means the health panel reads
+`delayed` for most of each half hour, since the scheduler's threshold is
+two minutes for every kind. Known and tolerated. This layer is what
+exposed the tile projection bug (see process notes).
+
+Still unbuilt from Elexon: `bmrs/api/v1/datasets/FUELINST` for the 5-minute
+GB fuel mix (a single national scalar, no geometry) and per-BM-unit output
+(B1610), which returned an empty `data` array.
 
 ### Others, verified keyless
 - **data.police.uk** — street-level crime, OGL v3. Monthly, ~2 month lag,
@@ -353,8 +364,10 @@ Easiest first, roughly most reusable first:
 8. ~~Global Meteor Network~~ — done.
 9. ~~SatNOGS~~ — done.
 10. ~~TfL road disruptions~~ — done.
-11. Next candidates from the keyless list: Elexon/carbon intensity (needs
-    DNO region polygons), Open-Meteo, EMODnet, FDSN, data.police.uk.
+11. ~~Carbon intensity on DNO boundaries~~ — done.
+12. Next candidates from the keyless list: Open-Meteo, EMODnet (kind
+    `feature`; flows through `entities` today, the `features` table is
+    unused), FDSN Raspberry Shake, data.police.uk.
 
 ## Process notes
 
@@ -404,6 +417,12 @@ Things that have gone wrong more than once, in the order they were learned.
   are stamped an hour in the future and look newer than every edit. A
   `find target -newermt "$(date)" -exec touch -d '3 hours ago' {} +` is
   cheaper than `cargo clean`.
+- Draw a country-sized polygon before trusting the tiler. Fourteen point
+  layers hid a projection bug — latitude mapped linearly across each tile
+  instead of through Mercator — because inside a high-zoom tile the error
+  is invisible. The first big polygon drew a second Britain off Iceland.
+  Any new geometry path should be checked at z2 as well as z12, by fetching
+  a tile and mapping the vertices back to degrees.
 - A field that is a number in every sample can still be a boolean in half
   the layer. SatNOGS's `success_rate` is `false` on 2,333 of 4,470 stations.
   Count the JSON types per field over the whole response before declaring

@@ -138,6 +138,16 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#56ccf2".into();
         s.min_zoom = 7;
     }),
+    ("carbon-intensity", |s| {
+        // Fourteen regions that tile Great Britain: an area layer, wanted
+        // from the lowest zoom because the whole point is the pattern across
+        // the country, and pointless past the scale at which one region
+        // fills the screen. Green, for the reading it is best when it is.
+        s.geometry = GeometryClass::Area;
+        s.color = "#27ae60".into();
+        s.min_zoom = 0;
+        s.max_zoom = 9;
+    }),
     ("road-disruptions", |s| {
         // Points with an area on a quarter of them, so Mixed stays; London
         // only, so nothing to see below z8. Amber, the colour of a road sign.

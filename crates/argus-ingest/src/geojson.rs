@@ -17,8 +17,12 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub enum GeoJsonGeometry {
-    Polygon { coordinates: Vec<Vec<[f64; 2]>> },
-    MultiPolygon { coordinates: Vec<Vec<Vec<[f64; 2]>>> },
+    Polygon {
+        coordinates: Vec<Vec<[f64; 2]>>,
+    },
+    MultiPolygon {
+        coordinates: Vec<Vec<Vec<[f64; 2]>>>,
+    },
 }
 
 /// A `FeatureCollection` wrapping one or more geometries.
@@ -93,30 +97,95 @@ pub fn ring(points: &[[f64; 2]]) -> LineString<f64> {
     LineString(points.iter().map(|p| Coord { x: p[0], y: p[1] }).collect())
 }
 
-/// Mean of the outer ring's vertices — a label anchor, not a true centroid.
+/// A label anchor for an area: the area-weighted centroid of the largest
+/// polygon's outer ring.
 ///
-/// Good enough to hang a marker on and far cheaper than an area-weighted
-/// centroid. It is deliberately not presented as the feature's location: the
-/// polygon is the thing.
+/// Deliberately not the mean of the vertices, which was what this did
+/// first. A vertex mean is pulled toward whatever has the most vertices,
+/// and coastlines and islands have the most: it put the label for the South
+/// West England licence area on the Isles of Scilly and North Scotland's on
+/// Arran, because those rings are drawn in far more detail than the
+/// mainland. The largest polygon of a multipolygon rather than the first,
+/// for the same reason — the first is whatever the publisher listed first.
+/// It is still a label anchor, not the feature's location: the polygon is
+/// the thing.
 pub fn centroid(g: &Geometry<f64>) -> Option<(f64, f64)> {
-    let exterior = match g {
-        Geometry::Polygon(p) => p.exterior(),
-        Geometry::MultiPolygon(mp) => mp.0.first()?.exterior(),
+    let polygons: Vec<&geo_types::Polygon<f64>> = match g {
+        Geometry::Polygon(p) => vec![p],
+        Geometry::MultiPolygon(mp) => mp.0.iter().collect(),
         _ => return None,
     };
-    let pts: Vec<&Coord<f64>> = exterior.0.iter().collect();
-    if pts.is_empty() {
-        return None;
+    // Shoelace area and centroid of each exterior ring; the ring with the
+    // largest area wins.
+    let mut best: Option<(f64, f64, f64)> = None;
+    for polygon in polygons {
+        let ring = &polygon.exterior().0;
+        if ring.len() < 3 {
+            continue;
+        }
+        let (mut area2, mut cx, mut cy) = (0.0, 0.0, 0.0);
+        for pair in ring.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            let cross = a.x * b.y - b.x * a.y;
+            area2 += cross;
+            cx += (a.x + b.x) * cross;
+            cy += (a.y + b.y) * cross;
+        }
+        if area2.abs() < f64::EPSILON {
+            // Degenerate: fall back to the vertex mean for this ring.
+            let n = ring.len() as f64;
+            let mean = (
+                ring.iter().map(|c| c.x).sum::<f64>() / n,
+                ring.iter().map(|c| c.y).sum::<f64>() / n,
+            );
+            if best.is_none() {
+                best = Some((0.0, mean.0, mean.1));
+            }
+            continue;
+        }
+        let centroid = (cx / (3.0 * area2), cy / (3.0 * area2));
+        let area = area2.abs();
+        if best.is_none_or(|(a, _, _)| area > a) {
+            best = Some((area, centroid.0, centroid.1));
+        }
     }
-    let n = pts.len() as f64;
-    let lon = pts.iter().map(|c| c.x).sum::<f64>() / n;
-    let lat = pts.iter().map(|c| c.y).sum::<f64>() / n;
-    Some((lon, lat))
+    best.map(|(_, x, y)| (x, y))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_label_anchor_is_on_the_mainland_not_the_islands() {
+        // A big square drawn with four vertices and a tiny island drawn with
+        // a hundred, off to the west. A vertex mean lands on the island.
+        let mut island: Vec<[f64; 2]> = (0..100)
+            .map(|i| {
+                let t = i as f64 / 100.0 * std::f64::consts::TAU;
+                [-6.0 + 0.01 * t.cos(), 50.0 + 0.01 * t.sin()]
+            })
+            .collect();
+        island.push(island[0]);
+        let g = convert(&GeoJsonGeometry::MultiPolygon {
+            coordinates: vec![
+                vec![island],
+                vec![vec![
+                    [-3.0, 50.0],
+                    [-1.0, 50.0],
+                    [-1.0, 52.0],
+                    [-3.0, 52.0],
+                    [-3.0, 50.0],
+                ]],
+            ],
+        })
+        .unwrap();
+        let (lon, lat) = centroid(&g).unwrap();
+        assert!(
+            (lon - -2.0).abs() < 1e-9 && (lat - 51.0).abs() < 1e-9,
+            "anchor at {lon},{lat}"
+        );
+    }
 
     #[test]
     fn a_collection_of_several_polygons_becomes_one_multipolygon() {
@@ -182,7 +251,11 @@ mod tests {
         let Some(Geometry::Polygon(p)) = convert(&g) else {
             panic!("expected a polygon");
         };
-        assert_eq!(p.interiors().len(), 1, "an island inside a flood area is not flooded");
+        assert_eq!(
+            p.interiors().len(),
+            1,
+            "an island inside a flood area is not flooded"
+        );
     }
 
     #[test]
