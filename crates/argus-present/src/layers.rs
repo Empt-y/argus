@@ -1398,6 +1398,173 @@ pub fn fire<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut 
     card
 }
 
+// --- fireballs ----------------------------------------------------------------
+
+pub fn fireball<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "Fireball (NASA/JPL CNEOS)");
+    let kt = t.f64("impact_energy_kt");
+    let alt = t.f64("peak_altitude_km");
+    let vel = t.f64("velocity_kms");
+    let detected = t.str("detected").and_then(when);
+    let energy = kt.map(|kt| if kt >= 1.0 { format!("{} kilotons of TNT", num(kt, 1)) } else { format!("{} tons of TNT", num(kt * 1000.0, 0)) });
+    card.title = match kt {
+        Some(kt) if kt >= 1.0 => format!("Fireball, {} kt", num(kt, 1)),
+        Some(kt) => format!("Fireball, {} t", num(kt * 1000.0, 0)),
+        None => "Fireball".to_string(),
+    };
+    let mut summary = String::from("A bright meteor seen from orbit");
+    if let Some(d) = &detected {
+        summary.push_str(&format!(" at {d}"));
+    }
+    if let Some(e) = &energy {
+        summary.push_str(&format!(", releasing the energy of {e}"));
+    }
+    if let Some(a) = alt {
+        summary.push_str(&format!(", brightest at {} km up", num(a, 0)));
+    }
+    summary.push('.');
+    if kt.is_some_and(|k| k >= 100.0) {
+        summary.push_str(" Chelyabinsk-class.");
+    }
+    card.summary = Some(summary);
+    let mut rows = Vec::new();
+    push(&mut rows, "Detected", detected);
+    if let Some(e) = energy {
+        rows.push(row_note("Impact energy", e, "from the radiated energy, by the empirical scaling CNEOS uses"));
+    }
+    push(&mut rows, "Radiated energy", t.f64("radiated_energy_1e10_j").map(|e| format!("{} × 10¹⁰ J", num(e, 1))));
+    push(&mut rows, "Peak brightness altitude", alt.map(|a| format!("{} km", num(a, 1))));
+    push(&mut rows, "Entry speed", vel.map(|v| format!("{} km/s", num(v, 1))));
+    if let Some(v) = t.value("velocity_ecef_kms").and_then(|v| v.as_array()) {
+        let parts: Vec<String> = v.iter().filter_map(|x| x.as_f64()).map(|x| num(x, 1)).collect();
+        if parts.len() == 3 {
+            rows.push(row_note("Velocity (ECEF)", format!("{} km/s", parts.join(", ")), "x, y, z in the Earth-fixed frame"));
+        }
+    }
+    card.sections.extend(section(None, rows));
+    card.links.push(Link { label: "CNEOS fireball table".into(), url: "https://cneos.jpl.nasa.gov/fireballs/".into() });
+    card
+}
+
+// --- airports -----------------------------------------------------------------
+
+pub fn airport<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let kind = t.str("type").unwrap_or("");
+    let kind_words = match kind {
+        "large_airport" => "Large airport",
+        "medium_airport" => "Medium airport",
+        "small_airport" => "Small airfield",
+        "heliport" => "Heliport",
+        "seaplane_base" => "Seaplane base",
+        "balloonport" => "Balloonport",
+        "closed" => "Closed airfield",
+        _ => "Airfield",
+    };
+    let mut card = base(subject, &format!("{kind_words} (OurAirports)"));
+    let name = t.str("name").unwrap_or(subject.key).to_string();
+    let icao = t.str("icao");
+    let iata = t.str("iata");
+    card.title = match (iata, icao) {
+        (Some(a), Some(i)) => format!("{name} ({a} / {i})"),
+        (Some(a), None) => format!("{name} ({a})"),
+        (None, Some(i)) => format!("{name} ({i})"),
+        (None, None) => name.clone(),
+    };
+    let closed = t.bool("closed") == Some(true);
+    let scheduled = t.bool("scheduled_service") == Some(true);
+    let town = t.str("municipality");
+    let country = t.str("country");
+    let runways = t.value("runways").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let longest = runways.iter().filter_map(|r| r.get("length_ft").and_then(|l| l.as_f64())).fold(None, |m: Option<f64>, l| Some(m.map_or(l, |m| m.max(l))));
+    let mut summary = kind_words.to_string();
+    if let (Some(tn), Some(c)) = (town, country) {
+        summary.push_str(&format!(" at {tn}, {c}"));
+    } else if let Some(c) = country {
+        summary.push_str(&format!(" in {c}"));
+    }
+    match (runways.len(), longest) {
+        (0, _) => {}
+        (n, Some(l)) => summary.push_str(&format!(", {n} runway{}, the longest {}", if n == 1 { "" } else { "s" }, feet(l))),
+        (n, None) => summary.push_str(&format!(", {n} runway{}", if n == 1 { "" } else { "s" })),
+    }
+    if scheduled {
+        summary.push_str(", with scheduled airline service");
+    }
+    summary.push('.');
+    if closed {
+        summary.push_str(" Closed.");
+    }
+    card.summary = Some(summary);
+    let mut rows = Vec::new();
+    push(&mut rows, "ICAO", icao.map(str::to_string));
+    push(&mut rows, "IATA", iata.map(str::to_string));
+    push(&mut rows, "GPS code", t.str("gps_code").map(str::to_string));
+    push(&mut rows, "Local code", t.str("local_code").map(str::to_string));
+    push(&mut rows, "Elevation", t.f64("elevation_ft").map(feet));
+    push(&mut rows, "Town", town.map(str::to_string));
+    push(&mut rows, "Region", t.str("region").map(str::to_string));
+    push(&mut rows, "Country", country.map(str::to_string));
+    t.skip("ident");
+    t.skip("runway_count");
+    card.sections.extend(section(None, rows));
+    if !runways.is_empty() {
+        let rows: Vec<Row> = runways
+            .iter()
+            .map(|r| {
+                let ident = r.get("ident").and_then(|v| v.as_str()).unwrap_or("?");
+                let mut parts = Vec::new();
+                if let Some(l) = r.get("length_ft").and_then(|v| v.as_f64()) {
+                    parts.push(feet(l));
+                }
+                if let Some(w) = r.get("width_ft").and_then(|v| v.as_f64()) {
+                    parts.push(format!("{} ft wide", num(w, 0)));
+                }
+                if let Some(s) = r.get("surface").and_then(|v| v.as_str()) {
+                    parts.push(surface_words(s));
+                }
+                if r.get("lighted").and_then(|v| v.as_bool()) == Some(true) {
+                    parts.push("lit".into());
+                }
+                if r.get("closed").and_then(|v| v.as_bool()) == Some(true) {
+                    parts.push("closed".into());
+                }
+                let text = if parts.is_empty() { "—".to_string() } else { parts.join(", ") };
+                match r.get("heading_deg").and_then(|v| v.as_f64()) {
+                    Some(h) => row_note(ident, text, format!("true heading {}", bearing(h))),
+                    None => row(ident, text),
+                }
+            })
+            .collect();
+        card.sections.extend(section(Some("Runways"), rows));
+    }
+    if let Some(u) = t.str("wikipedia") {
+        card.links.push(Link { label: "Wikipedia".into(), url: u.to_string() });
+    }
+    if let Some(u) = t.str("url") {
+        card.links.push(Link { label: "Airport site".into(), url: u.to_string() });
+    }
+    card
+}
+
+fn surface_words(code: &str) -> String {
+    let c = code.to_uppercase();
+    let word = match c.as_str() {
+        "ASP" | "ASPH" | "ASPH-G" | "ASPHALT" => "asphalt",
+        "CON" | "CONC" | "CONCRETE" => "concrete",
+        "GRS" | "GRASS" | "TURF" | "TURF-G" => "grass",
+        "GRE" | "GRVL" | "GRAVEL" => "gravel",
+        "DIRT" | "DIRT-G" | "EARTH" => "dirt",
+        "WATER" => "water",
+        "SAND" => "sand",
+        "PEM" => "asphalt over concrete",
+        "UNK" | "" => return String::new(),
+        _ => return code.to_lowercase(),
+    };
+    word.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{card, Subject};
@@ -1563,5 +1730,23 @@ mod tests {
         assert_eq!(c.summary.as_deref(), Some("A 375 m pixel that NOAA-20 saw burning at 16 Sep 12:30 UTC, radiating 46 MW with high confidence. The satellite cannot tell a wildfire from a flare, a field or a furnace."));
         assert_eq!(value(&c, "Pass"), "daytime");
         assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
+    }
+
+    #[test]
+    fn a_fireball_reads_its_energy_and_an_airport_its_runways() {
+        let f = present("fireballs", serde_json::json!({"impact_energy_kt": 440.0, "radiated_energy_1e10_j": 375000.0, "peak_altitude_km": 23.3, "velocity_kms": 18.6, "velocity_ecef_kms": [12.8, -13.3, -2.4], "detected": "2013-02-15T03:20:33Z"}), "Fireball, 440.0 kt");
+        assert_eq!(f.title, "Fireball, 440 kt");
+        assert_eq!(f.summary.as_deref(), Some("A bright meteor seen from orbit at 15 Feb 2013 03:20 UTC, releasing the energy of 440 kilotons of TNT, brightest at 23 km up. Chelyabinsk-class."));
+        assert!(f.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{f:#?}");
+        let a = present("airports", serde_json::json!({"ident": "EGLL", "name": "London Heathrow Airport", "type": "large_airport", "icao": "EGLL", "iata": "LHR", "elevation_ft": 83.0, "country": "GB", "region": "GB-ENG", "municipality": "London", "scheduled_service": true, "url": "http://www.heathrowairport.com/", "wikipedia": "https://en.wikipedia.org/wiki/Heathrow_Airport", "runway_count": 2, "runways": [{"ident": "09L/27R", "length_ft": 12799.0, "width_ft": 164.0, "surface": "ASP", "heading_deg": 89.6, "lighted": true}, {"ident": "09R/27L", "length_ft": 12008.0, "width_ft": 164.0, "surface": "ASP", "heading_deg": 89.6, "lighted": true}]}), "London Heathrow Airport (LHR)");
+        assert_eq!(a.title, "London Heathrow Airport (LHR / EGLL)");
+        assert_eq!(a.summary.as_deref(), Some("Large airport at London, GB, 2 runways, the longest 12,799 ft (3,901 m), with scheduled airline service."));
+        let rw = a.sections.iter().find(|s| s.heading.as_deref() == Some("Runways")).unwrap();
+        assert_eq!(rw.rows[0].value, "12,799 ft (3,901 m), 164 ft wide, asphalt, lit");
+        assert_eq!(rw.rows[0].note.as_deref(), Some("true heading 90° (E)"));
+        assert_eq!(a.links.len(), 2);
+        assert!(a.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{a:#?}");
+        let closed = present("airports", serde_json::json!({"ident": "XXXX", "name": "Old Field", "type": "closed", "closed": true, "country": "GB"}), "Old Field");
+        assert!(closed.summary.as_deref().unwrap().ends_with("Closed."));
     }
 }

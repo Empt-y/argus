@@ -147,6 +147,12 @@ enabled = true    # TeleGeography cable landing points and what lands there, wee
 [sources.power-grid]
 enabled = true    # OpenStreetMap power lines, substations and plants per [[aoi]] via Overpass, weekly
 
+[sources.fireballs]
+enabled = true    # NASA/JPL CNEOS fireballs, worldwide, six-hourly
+
+[sources.airports]
+enabled = true    # OurAirports: every airfield and heliport with runways, worldwide, weekly (17 MB)
+
 # Keyed sources, off until a credential is supplied.
 [sources.buses]
 enabled = true

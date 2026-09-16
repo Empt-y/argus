@@ -46,6 +46,8 @@ Entity kinds refer to `argus_core::EntityKind`.
 | `cable-landings` | `cables.rs` | TeleGeography landing points and what lands there |
 | `power-grid` | `osmpower.rs` | OSM power lines, substations and plants via Overpass, per AOI |
 | `fires` | `firms.rs` | NASA FIRMS VIIRS active fires, worldwide, last day (keyed) |
+| `fireballs` | `cneos.rs` | NASA/JPL CNEOS fireballs seen from orbit, since 1988 |
+| `airports` | `ourairports.rs` | OurAirports gazetteer: every airfield with runways |
 
 Notes on the ones that had something to teach follow.
 
@@ -393,6 +395,19 @@ about 36, so a three-product poll is ~110; half-hourly. `acq_time` is HHMM
 acquisition minute, and the driver remembers a day's keys so a re-read
 writes only what is new. Kind `event`, dated by acquisition.
 
+### CNEOS fireballs and OurAirports — done
+`ssd-api.jpl.nasa.gov/fireball.api?req-loc=true&vel-comp=true`: 887 rows since
+1988 as `fields` + `data` arrays of strings, 80 KB; a tenth have no position;
+`lat-dir`/`lon-dir` are separate hemisphere letters. Chelyabinsk is
+`2013-02-15 03:20:26`, 441 kt. Kind `event` dated by detection, so the live
+view is usually empty and the DVR fills it — that is honest for forty a
+year. OurAirports: `raw.githubusercontent.com/davidmegginson/ourairports-data/main/airports.csv`
+(86,083 rows, 12.7 MB) and `runways.csv` (48,000). The project's own
+`ourairports.com/data/` answered nothing to a plain GET; the GitHub Pages
+mirror at `davidmegginson.github.io` and raw GitHub both work. Public domain.
+Kind `feature`, weekly, key `airport:{ident}`; 10,508 carry an ICAO code,
+the join to `metars`. Closed airfields (13,524) are kept and marked.
+
 ### Others, verified keyless
 - **TfL Unified API** — keyless line status and bus arrivals with vehicle
   registrations; road disruptions are built (below). BODS carries TfL's bus
@@ -402,8 +417,8 @@ writes only what is new. Kind `event`, dated by acquisition.
   redirects or you silently get nothing. ORFEUS returns 204/404 for the UK.
 - **AERONET** — 1,674 aerosol sites, but a 2026 query for one site returned a
   45-byte banner and no rows. Probe per site before assuming currency.
-- **NASA JPL SSD/CNEOS** — fireballs have lat/lon/altitude; close approaches
-  and Sentry risk are non-spatial.
+- **NASA JPL SSD/CNEOS** — fireballs built (above); close approaches and
+  Sentry risk are non-spatial.
 - **PlanIt** — UK planning applications with point geometry. Date-bounded
   queries work; bbox+recent timed out at 45 s.
 - **UK retail fuel prices** — per-retailer JSON under the CMA scheme. Asda's
@@ -414,6 +429,7 @@ writes only what is new. Kind `event`, dated by acquisition.
   envelope), FSA food hygiene, Helioviewer (solar imagery), OurAirports
   (86,021 rows, public domain), Safecast (radiation, but London samples were
   over a year old), AuroraWatch UK, NOAA CO-OPS tides (US only), OSM notes.
+  OurAirports is built (above).
 
 ## Promising, unverified
 
@@ -468,9 +484,11 @@ Easiest first, roughly most reusable first:
     month-only dates are stamped at poll time with the month carried.
 14. ~~Phase 8 infrastructure: submarine cables, power grid~~ — done, and
     ~~Phase 7 fires (FIRMS)~~ — done, keyed.
-15. Next candidates from the keyless list: wspr.live (needs server-side
-    aggregation), Open-Meteo flood (needs river points), NASA CNEOS
-    fireballs, OurAirports, AuroraWatch UK, FSA food hygiene. Phase 7
+15. ~~CNEOS fireballs, OurAirports~~ — done.
+16. Next candidates from the keyless list: wspr.live (needs server-side
+    aggregation), Open-Meteo flood (needs river points — the airports or
+    the EA gauges could supply them), AuroraWatch UK (a national scalar,
+    not spatial), FSA food hygiene. Phase 7
     still unbuilt: imagery, nightlights. Phase 8: BGP needs a geolocation
     step before it is spatial.
 

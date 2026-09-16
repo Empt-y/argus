@@ -650,6 +650,20 @@ fn build_sources(
         )));
     }
 
+    // Fireballs from CNEOS: the boulders, forty a year, six-hourly. And
+    // every airfield in the world from OurAirports, weekly, a feature layer
+    // that joins to the METARs by ICAO code.
+    if enabled("fireballs") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::Fireballs::new(
+            http.clone(),
+        )));
+    }
+    if enabled("airports") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::Airports::new(
+            http.clone(),
+        )));
+    }
+
     // Fires (Phase 7): every VIIRS detection of the last day, worldwide,
     // every half hour. Keyed: the FIRMS MAP_KEY, which is not the
     // Earthdata token.

@@ -193,12 +193,13 @@ static OVERRIDES: &[(&str, Override)] = &[
     }),
     ("street-crime", |s| {
         // Half a million points a month across England and Wales, snapped
-        // to streets. Points, and not below z11: below that a city is a
-        // solid blob and the tile is megabytes. A muted red-brown, so it
-        // reads as a record rather than an alarm.
+        // to streets. Points, and not below z12: a z11 tile of central
+        // London was 740 KB, a z12 one 100 KB, and a city is a solid blob
+        // at either. A muted red-brown, so it reads as a record rather
+        // than an alarm.
         s.geometry = GeometryClass::Point;
         s.color = "#b5651d".into();
-        s.min_zoom = 11;
+        s.min_zoom = 12;
     }),
     ("submarine-cables", |s| {
         // Seven hundred lines across every ocean; the whole point is the
@@ -230,6 +231,22 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.geometry = GeometryClass::Point;
         s.color = "#ff6b35".into();
         s.min_zoom = 2;
+    }),
+    ("fireballs", |s| {
+        // Forty a year worldwide, each one news. From z0, like the quakes,
+        // and the meteors' gold, saturated: the same sky, a bigger rock.
+        s.geometry = GeometryClass::Point;
+        s.color = "#ffb300".into();
+        s.min_zoom = 0;
+    }),
+    ("airports", |s| {
+        // Eighty-six thousand points, most of them a grass strip or a
+        // hospital helipad. From z6, where a large airport is a place on a
+        // regional map; the tiler cannot pick the large ones out, so the
+        // whole gazetteer waits for that zoom. Runway-light white-blue.
+        s.geometry = GeometryClass::Point;
+        s.color = "#c5d9f1".into();
+        s.min_zoom = 6;
     }),
     ("ground-stations", |s| {
         // Four and a half thousand worldwide, most of them dark, so from

@@ -16,7 +16,7 @@ this box, and where did it reappear".
 This is a personal project and it is early, but it works end to end. As of
 September 2026:
 
-- A Rust daemon (`argusd`) polls 30 upstream feeds into 27 layers, with
+- A Rust daemon (`argusd`) polls 32 upstream feeds into 29 layers, with
   provider failover chains, per-provider budgets and a disk budget.
 - Postgres/PostGIS/TimescaleDB store with raw observations rolled up into
   tracks and daily summaries.
@@ -41,8 +41,10 @@ air quality, pollen and sea state sampled on a lattice over each area
 (Open-Meteo), the Raspberry Shake citizen seismograph network, a month of
 street-level crime for England and Wales (data.police.uk), every submarine
 cable and where it lands (TeleGeography), the power grid — lines, substations
-and plants — from OpenStreetMap, and every active fire the VIIRS satellites
-saw in the last day (NASA FIRMS, keyed).
+and plants — from OpenStreetMap, every active fire the VIIRS satellites
+saw in the last day (NASA FIRMS, keyed), every fireball seen from orbit
+since 1988 (CNEOS), and every airfield in the world with its runways
+(OurAirports).
 
 Not built yet: satellite imagery and fire detections, infrastructure layers
 (power grid, cables, BGP), SDR receivers, phone-as-sensor, the AR sky view.
