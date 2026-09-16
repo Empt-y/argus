@@ -138,6 +138,14 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#56ccf2".into();
         s.min_zoom = 7;
     }),
+    ("argo-floats", |s| {
+        // Four thousand across every ocean and nowhere dense, so from z2:
+        // the question is what the array looks like, which is asked of a
+        // basin. Deep blue, for instruments that spend nine days in ten a
+        // kilometre down; the buoys' teal is the surface.
+        s.color = "#3b5bdb".into();
+        s.min_zoom = 2;
+    }),
     ("buoys", |s| {
         // Under nine hundred points across every ocean, so visible from z3:
         // the question is "what is the sea doing off this coast", which is

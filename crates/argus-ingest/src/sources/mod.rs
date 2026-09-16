@@ -5,6 +5,7 @@
 //! format into observations. Keeping `decode` separate from `poll` is what lets
 //! each driver be tested against a captured fixture with no network.
 
+pub mod argo;
 pub mod bods;
 pub mod eaflood;
 pub mod elements;
@@ -21,6 +22,7 @@ pub mod stormoverflow;
 pub mod readsb;
 pub mod usgs;
 
+pub use argo::ArgoFloats;
 pub use bods::Buses;
 pub use celestrak::CelestrakSatellites;
 pub use eaflood::{EaFloodWarnings, EaRiverGauges};

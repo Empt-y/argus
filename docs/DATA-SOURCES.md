@@ -29,6 +29,9 @@ Entity kinds refer to `argus_core::EntityKind`.
 | `flood-warnings` | `eaflood.rs` | Environment Agency flood warnings |
 | `river-gauges` | `eaflood.rs` | EA river, tide and rainfall gauges |
 | `buoys` | `ndbc.rs` | NOAA NDBC buoys and coastal stations |
+| `metars` | `metar.rs` | Aerodrome METARs with TAFs, NOAA AWC bulk cache |
+| `buses` | `bods.rs` | Every bus in England, Bus Open Data Service |
+| `argo-floats` | `argo.rs` | Argo profiling floats, latest surfacing |
 
 Notes on the ones that had something to teach follow.
 
@@ -186,6 +189,18 @@ draws as a great-circle path. About 4.4M rows a day, so it has to be filtered
 or aggregated server-side, which the ClickHouse dialect makes easy. Kind
 `event`.
 
+### Argo floats — done
+Ifremer ERDDAP `tabledap/ArgoFloats.json`. 4,315 floats reported in thirty
+days; the layer is each float's latest surfacing. Profile-level columns with
+`distinct()` answer in 20 s; anything touching a pressure level does not —
+`pres<=12` over twelve days took 317 s and `orderByMin` hit the proxy's 300 s
+limit — so the readings are not fetched and a card links to the float's own
+page. Poll time is the observation time and a surfacing older than the
+station horizon is `Quality::Stale`, by the storm-overflow reasoning: 90% of
+the array is between surfacings at any moment and hiding it would be
+wrong. `position_qc` 4 and 9 dropped. Percent-encode `>` `<` `,` or Tomcat
+returns 400. Kind `station`, layer `argo-floats`, patient client.
+
 ### Bus Open Data Service — done
 `https://data.bus-data.dft.gov.uk/api/v1/datafeed/?api_key=…&boundingBox=minLng,minLat,maxLng,maxLat`
 returns SIRI-VM XML for every bus in the box; free self-serve key. 28,088
@@ -230,8 +245,6 @@ returned an empty `data` array and its swagger isn't at any standard path.
 - **data.police.uk** — street-level crime, OGL v3. Monthly, ~2 month lag,
   locations snapped to anonymised points; the UI needs to say both or it reads
   as precise. Kind `event`.
-- **Argo floats** — Ifremer ERDDAP `tabledap/ArgoFloats.json`, ~4,000 floats,
-  one profile per ~10 days. Percent-encode `>` `<` `,` or Tomcat returns 400.
 - **SatNOGS** — 4,453 amateur ground stations plus observations, joinable to
   the satellite layer by `norad_cat_id`. CC BY-SA 4.0.
 - **Global Meteor Network** — daily trajectory files, ~1,400 meteors/day, each
@@ -302,8 +315,10 @@ Easiest first, roughly most reusable first:
 3. ~~Storm overflows~~ — done; nine feeds, two schemas.
 4. ~~NDBC buoys~~ — done.
 5. ~~EA flood monitoring~~ — done.
-6. ~~BODS~~ — done; the numbered list is finished. Next candidates are the
-   verified-keyless ones above: Open-Meteo, Elexon, TfL, Argo, SatNOGS.
+6. ~~BODS~~ — done; the numbered list is finished.
+7. ~~Argo floats~~ — done.
+8. Next candidates from the keyless list: Global Meteor Network, SatNOGS,
+   TfL road disruptions, Elexon/carbon intensity, Open-Meteo.
 
 ## Process notes
 

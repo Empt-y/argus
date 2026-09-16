@@ -575,6 +575,15 @@ fn build_sources(
         ));
     }
 
+    // Argo: the last surfacing of every profiling float in the global array.
+    // The patient client, because ERDDAP takes twenty seconds to answer a
+    // thirty-day profile-level query and the shared client allows thirty.
+    if enabled("argo-floats") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::ArgoFloats::new(
+            patient_http.clone(),
+        )));
+    }
+
     // NDBC: the ocean's surface weather, from every buoy, platform and
     // coastal station NOAA relays, in one 22 KB request. Global in extent if
     // not in density.

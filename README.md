@@ -33,7 +33,7 @@ Live layers right now: flights (adsb.lol → adsb.fi → OpenSky), satellites
 US weather alerts (NWS), aviation SIGMETs and aerodrome METARs with their
 TAFs, radiosondes (SondeHub), every bus in England (Bus Open Data Service),
 UK storm overflows (nine water companies), Environment Agency flood warnings
-and river gauges, and NOAA NDBC buoys.
+and river gauges, NOAA NDBC buoys, and the Argo float array.
 
 Not built yet: satellite imagery and fire detections, infrastructure layers
 (power grid, cables, BGP), SDR receivers, phone-as-sensor, the AR sky view.
