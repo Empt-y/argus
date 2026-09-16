@@ -331,6 +331,24 @@ mod tests {
         serde_json::from_str(FIXTURE).expect("fixture parses as the live wire format")
     }
 
+    /// The middle of the fixture's epoch span. Propagating a captured element
+    /// set at the wall clock is a test that expires: SGP4 error grows with
+    /// age, so a test that passed in August drifted in September and went
+    /// silent once the fixture passed `MAX_ELEMENT_AGE` — several tests here
+    /// short-circuited on an empty result and were passing vacuously. The
+    /// fixture carries its own clock, and that is the one to propagate at.
+    ///
+    /// The midpoint rather than the newest epoch because the epochs are eleven
+    /// days apart (TESS was captured later than the rest), and an instant an
+    /// hour after the newest would already be past the ISS's useful life.
+    /// Halfway, everything is within six days of `at`.
+    fn fixture_now(els: &[sgp4::Elements]) -> DateTime<Utc> {
+        let epochs = els.iter().map(|e| e.datetime.and_utc());
+        let oldest = epochs.clone().min().expect("the fixture is not empty");
+        let newest = epochs.max().expect("the fixture is not empty");
+        oldest + (newest - oldest) / 2
+    }
+
     /// A scratch directory that cleans up after itself.
     fn scratch(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -365,7 +383,11 @@ mod tests {
         let adopted = second.store.load(MAX_ELEMENT_AGE).await.expect("stored elements adopted");
         assert_eq!(adopted.elements.len(), elements().len());
 
-        let obs = propagate_all(&adopted.elements, Utc::now(), &SourceId::new("celestrak"));
+        let obs = propagate_all(
+            &adopted.elements,
+            fixture_now(&adopted.elements),
+            &SourceId::new("celestrak"),
+        );
         assert!(!obs.is_empty(), "held elements must still propagate");
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -405,7 +427,7 @@ mod tests {
 
     #[test]
     fn the_fixture_propagates_to_plausible_orbits() {
-        let obs = propagate_all(&elements(), Utc::now(), &SourceId::new("celestrak"));
+        let obs = propagate_all(&elements(), fixture_now(&elements()), &SourceId::new("celestrak"));
         assert!(!obs.is_empty(), "nothing propagated");
         for o in &obs {
             let p = o.position.expect("position");
@@ -426,7 +448,7 @@ mod tests {
     fn satellite_positions_are_always_modelled_never_live() {
         // Nothing here is measured. If this ever reads Live, the client will
         // present a physics estimate as a sensor reading.
-        let obs = propagate_all(&elements(), Utc::now(), &SourceId::new("celestrak"));
+        let obs = propagate_all(&elements(), fixture_now(&elements()), &SourceId::new("celestrak"));
         assert!(obs.iter().all(|o| o.quality == Quality::Modeled));
         assert!(obs.iter().all(|o| !o.quality.is_measured()));
     }
@@ -435,11 +457,11 @@ mod tests {
     fn the_iss_is_where_the_iss_should_be() {
         // NORAD 25544 in low Earth orbit: ~400-420 km, ~7.6 km/s, 51.6°
         // inclination so it never strays beyond those latitudes.
-        let obs = propagate_all(&elements(), Utc::now(), &SourceId::new("celestrak"));
-        let Some(iss) = obs.iter().find(|o| o.entity.key == "25544") else {
-            eprintln!("skipping: ISS not present in fixture");
-            return;
-        };
+        let obs = propagate_all(&elements(), fixture_now(&elements()), &SourceId::new("celestrak"));
+        let iss = obs
+            .iter()
+            .find(|o| o.entity.key == "25544")
+            .expect("the ISS is in the fixture and propagates at its own epoch");
         let p = iss.position.unwrap();
         let alt_km = p.alt_m.unwrap() / 1000.0;
         assert!(
@@ -464,11 +486,17 @@ mod tests {
         // propagation that silently returns the same point every time, which
         // would otherwise look like a perfectly stable satellite.
         let els = elements();
-        let t0 = Utc::now();
+        let t0 = fixture_now(&els);
         let a = propagate_all(&els, t0, &SourceId::new("celestrak"));
         let b = propagate_all(&els, t0 + Duration::minutes(1), &SourceId::new("celestrak"));
 
-        let Some(first) = a.first() else { return };
+        // The ISS specifically: it is in low Earth orbit, which is what the
+        // 7.6 km/s figure assumes. TESS is in the fixture too, and near the
+        // apogee of its 13-day orbit it covers ten kilometres a minute.
+        let first = a
+            .iter()
+            .find(|o| o.entity.key == "25544")
+            .expect("the ISS propagates at the fixture's epoch");
         let matched = b.iter().find(|o| o.entity.key == first.entity.key).unwrap();
         let (p1, p2) = (first.position.unwrap(), matched.position.unwrap());
         let moved_km =
@@ -485,7 +513,7 @@ mod tests {
         // SGP4 error grows fast. A month-old element set is fiction, and
         // publishing it as a position would be worse than publishing nothing.
         let els = elements();
-        let far_future = Utc::now() + Duration::days(60);
+        let far_future = fixture_now(&els) + Duration::days(60);
         let obs = propagate_all(&els, far_future, &SourceId::new("celestrak"));
         assert!(
             obs.is_empty(),
@@ -496,7 +524,7 @@ mod tests {
 
     #[test]
     fn element_age_is_reported_so_trust_can_be_judged() {
-        let obs = propagate_all(&elements(), Utc::now(), &SourceId::new("celestrak"));
+        let obs = propagate_all(&elements(), fixture_now(&elements()), &SourceId::new("celestrak"));
         let o = obs.first().expect("at least one");
         let age = o.attrs["element_age_hours"].as_f64().expect("age reported");
         assert!(age.is_finite());

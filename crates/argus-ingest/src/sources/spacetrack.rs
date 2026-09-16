@@ -283,8 +283,17 @@ mod tests {
     fn the_fixture_propagates() {
         let raw = include_str!("../../fixtures/spacetrack_gp.json");
         let parsed: Vec<sgp4::Elements> = serde_json::from_str(raw).unwrap();
-        let obs = propagate_all(&parsed, Utc::now(), &SourceId::new("spacetrack"));
-        assert!(!obs.is_empty(), "Space-Track elements must propagate");
+        // At the fixture's own clock, not the wall clock: a captured element
+        // set ages past MAX_ELEMENT_AGE and then propagates to nothing, which
+        // is correct behaviour and a useless test.
+        let at = parsed
+            .iter()
+            .map(|e| e.datetime.and_utc())
+            .max()
+            .expect("fixture is not empty")
+            + chrono::Duration::hours(1);
+        let obs = propagate_all(&parsed, at, &SourceId::new("spacetrack"));
+        assert_eq!(obs.len(), parsed.len(), "every Space-Track element must propagate");
     }
 
     #[test]
