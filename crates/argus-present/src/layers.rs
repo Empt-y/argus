@@ -1565,6 +1565,52 @@ fn surface_words(code: &str) -> String {
     word.to_string()
 }
 
+// --- river discharge ------------------------------------------------------------
+
+fn flow(v: f64) -> String {
+    if v >= 10.0 { format!("{} m³/s", num(v, 0)) } else { format!("{} m³/s", num(v, 1)) }
+}
+
+pub fn river_discharge<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "River discharge, modelled (GloFAS via Open-Meteo)");
+    let place = t.str("place").map(str::to_string);
+    let rivers = t.strings("rivers");
+    card.title = place.clone().or_else(|| rivers.first().cloned()).unwrap_or_else(|| "River discharge".into());
+    let today = t.f64("discharge_m3s");
+    let week_ago = t.f64("discharge_week_ago_m3s");
+    let peak = t.f64("discharge_7d_peak_m3s");
+    let series: Vec<f64> = t.value("discharge_7d_m3s").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_f64()).collect()).unwrap_or_default();
+    let trend = match (today, week_ago) {
+        (Some(t), Some(w)) if w > 0.0 && t > w * 1.5 => Some(format!("rising — {} a week ago", flow(w))),
+        (Some(t), Some(w)) if w > 0.0 && t < w / 1.5 => Some(format!("falling — {} a week ago", flow(w))),
+        (Some(_), Some(w)) => Some(format!("steady — {} a week ago", flow(w))),
+        _ => None,
+    };
+    card.summary = today.map(|v| {
+        let mut s = format!("Modelled flow of {} today", flow(v));
+        if let Some(tr) = &trend {
+            s.push_str(&format!(", {tr}"));
+        }
+        s.push_str(". A 5 km river-model cell, not the gauge's own reading.");
+        s
+    });
+    let mut rows = Vec::new();
+    push(&mut rows, "Discharge today", today.map(flow));
+    push(&mut rows, "Trend", trend);
+    push(&mut rows, "Peak this week", peak.map(flow));
+    if series.len() >= 2 {
+        rows.push(row_note("Last 7 days", series.iter().map(|v| if *v >= 10.0 { num(*v, 0) } else { num(*v, 1) }).collect::<Vec<_>>().join(" → "), "m³/s, oldest first"));
+    }
+    push(&mut rows, "Model day", t.str("model_day").map(str::to_string));
+    if rivers.len() > 1 {
+        rows.push(row("Rivers gauged here", rivers.join(", ")));
+    }
+    push(&mut rows, "Gauges in this cell", t.i64("gauges_in_cell").map(|n| n.to_string()));
+    card.sections.extend(section(None, rows));
+    card
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{card, Subject};
@@ -1748,5 +1794,14 @@ mod tests {
         assert!(a.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{a:#?}");
         let closed = present("airports", serde_json::json!({"ident": "XXXX", "name": "Old Field", "type": "closed", "closed": true, "country": "GB"}), "Old Field");
         assert!(closed.summary.as_deref().unwrap().ends_with("Closed."));
+    }
+
+    #[test]
+    fn a_river_cell_reads_its_flow_and_trend_and_names_the_river() {
+        let c = present("river-discharge", serde_json::json!({"discharge_m3s": 0.34, "discharge_7d_m3s": [3.14, 1.67, 0.8, 0.53, 0.42, 0.76, 0.34], "discharge_week_ago_m3s": 3.14, "discharge_7d_peak_m3s": 3.14, "model_day": "2026-09-16", "rivers": ["River Thames", "River Crane"], "place": "River Thames at Kingston upon Thames", "gauges_in_cell": 3}), "x");
+        assert_eq!(c.title, "River Thames at Kingston upon Thames");
+        assert_eq!(c.summary.as_deref(), Some("Modelled flow of 0.3 m³/s today, falling — 3.1 m³/s a week ago. A 5 km river-model cell, not the gauge's own reading."));
+        assert_eq!(value(&c, "Last 7 days"), "3.1 → 1.7 → 0.8 → 0.5 → 0.4 → 0.8 → 0.3");
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
     }
 }

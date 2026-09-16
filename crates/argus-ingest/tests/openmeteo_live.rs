@@ -83,3 +83,28 @@ async fn the_wave_model_answers_for_the_sea_and_not_the_land() {
         assert!(p.lat < 51.0, "{} at {:.2}N is well inland", o.entity.key, p.lat);
     }
 }
+
+#[tokio::test]
+async fn river_discharge_is_sampled_at_a_thousand_gauged_cells_and_the_thames_flows() {
+    if std::env::var("ARGUS_NETWORK_TESTS").is_err() {
+        eprintln!("SKIPPING: set ARGUS_NETWORK_TESTS=1 to poll the live feed");
+        return;
+    }
+    let http = argus_ingest::HttpClient::new(std::time::Duration::from_secs(30)).expect("an http client");
+    let source = argus_ingest::sources::RiverDischarge::new(http);
+    let observations = match source.poll(&argus_core::PollCtx::default()).await {
+        Ok(o) => o,
+        Err(err) => return skip_or_panic("glofas", err),
+    };
+    // 1,078 tenth-degree cells held a river gauge when written.
+    assert!(observations.len() > 700, "{} cells", observations.len());
+    let thames: Vec<_> = observations.iter().filter(|o| o.attrs["rivers"].as_array().is_some_and(|r| r.iter().any(|x| x == "River Thames"))).collect();
+    assert!(thames.len() > 10, "{} Thames cells", thames.len());
+    // Somewhere on the Thames the model has a river, not a ditch.
+    assert!(thames.iter().any(|o| o.attrs["discharge_m3s"].as_f64().unwrap() > 5.0), "no Thames cell over 5 m³/s: {:?}", thames.iter().map(|o| o.attrs["discharge_m3s"].as_f64()).collect::<Vec<_>>());
+    for o in &observations {
+        assert_eq!(o.entity.kind, EntityKind::Measure);
+        assert_eq!(o.quality, Quality::Modeled);
+        assert!(o.attrs["discharge_7d_m3s"].as_array().is_some_and(|a| a.len() >= 2));
+    }
+}

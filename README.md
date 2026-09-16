@@ -16,7 +16,7 @@ this box, and where did it reappear".
 This is a personal project and it is early, but it works end to end. As of
 September 2026:
 
-- A Rust daemon (`argusd`) polls 32 upstream feeds into 29 layers, with
+- A Rust daemon (`argusd`) polls 33 upstream feeds into 30 layers, with
   provider failover chains, per-provider budgets and a disk budget.
 - Postgres/PostGIS/TimescaleDB store with raw observations rolled up into
   tracks and daily summaries.
@@ -37,8 +37,8 @@ and river gauges, NOAA NDBC buoys, the Argo float array, every meteor the Global
 triangulates, the SatNOGS ground stations with what each is hearing, TfL's road disruptions across
 London, the carbon intensity of the grid in each of Britain's fourteen
 distribution regions, Europe's offshore platforms and wind farms, modelled
-air quality, pollen and sea state sampled on a lattice over each area
-(Open-Meteo), the Raspberry Shake citizen seismograph network, a month of
+air quality, pollen and sea state sampled on a lattice over each area and
+river discharge at every gauged river (Open-Meteo, CAMS, GloFAS), the Raspberry Shake citizen seismograph network, a month of
 street-level crime for England and Wales (data.police.uk), every submarine
 cable and where it lands (TeleGeography), the power grid — lines, substations
 and plants — from OpenStreetMap, every active fire the VIIRS satellites

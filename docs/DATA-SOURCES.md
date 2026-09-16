@@ -46,6 +46,7 @@ Entity kinds refer to `argus_core::EntityKind`.
 | `cable-landings` | `cables.rs` | TeleGeography landing points and what lands there |
 | `power-grid` | `osmpower.rs` | OSM power lines, substations and plants via Overpass, per AOI |
 | `fires` | `firms.rs` | NASA FIRMS VIIRS active fires, worldwide, last day (keyed) |
+| `river-discharge` | `glofas.rs` | GloFAS discharge via Open-Meteo, sampled at EA river gauges |
 | `fireballs` | `cneos.rs` | NASA/JPL CNEOS fireballs seen from orbit, since 1988 |
 | `airports` | `ourairports.rs` | OurAirports gazetteer: every airfield with runways |
 
@@ -395,6 +396,18 @@ about 36, so a three-product poll is ~110; half-hourly. `acq_time` is HHMM
 acquisition minute, and the driver remembers a day's keys so a re-read
 writes only what is new. Kind `event`, dated by acquisition.
 
+### GloFAS river discharge via Open-Meteo — done
+`flood-api.open-meteo.com/v1/flood?latitude=…&longitude=…&daily=river_discharge&past_days=7&forecast_days=1`.
+The design question from item 13 — where to sample a river model — is
+answered by the EA's own gauge list: `flood-monitoring/id/stations?parameter=level&type=SingleLevel`
+is 2,307 stations, every one with `riverName`, in 1,078 tenth-degree cells;
+the driver reads it and asks for those cells, labelled by the river and town
+of the gauge. **Open-Meteo's 600-calls-a-minute limit counts each point of a
+multi-point request**: eleven batches of a hundred sent back to back lost
+half of them to 429s (580 of 1,078 cells arrived), so batches go ten seconds
+apart. ~10% of cells answer null for every day (no modelled river there);
+dropped. Daily, `measure`, `Modeled`, dated by the model day, ~1,100 calls.
+
 ### CNEOS fireballs and OurAirports — done
 `ssd-api.jpl.nasa.gov/fireball.api?req-loc=true&vel-comp=true`: 887 rows since
 1988 as `fields` + `data` arrays of strings, 80 KB; a tenth have no position;
@@ -485,10 +498,10 @@ Easiest first, roughly most reusable first:
 14. ~~Phase 8 infrastructure: submarine cables, power grid~~ — done, and
     ~~Phase 7 fires (FIRMS)~~ — done, keyed.
 15. ~~CNEOS fireballs, OurAirports~~ — done.
-16. Next candidates from the keyless list: wspr.live (needs server-side
-    aggregation), Open-Meteo flood (needs river points — the airports or
-    the EA gauges could supply them), AuroraWatch UK (a national scalar,
-    not spatial), FSA food hygiene. Phase 7
+16. ~~Open-Meteo flood~~ — done, sampled at the EA gauges.
+17. Next candidates from the keyless list: wspr.live (needs server-side
+    aggregation), AuroraWatch UK (a national scalar, not spatial), FSA
+    food hygiene. Phase 7
     still unbuilt: imagery, nightlights. Phase 8: BGP needs a geolocation
     step before it is spatial.
 

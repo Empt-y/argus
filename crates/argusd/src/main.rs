@@ -613,6 +613,14 @@ fn build_sources(
         )));
     }
 
+    // GloFAS river discharge, sampled where the Environment Agency has a
+    // river gauge: 1,100 cells, daily.
+    if enabled("river-discharge") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::RiverDischarge::new(
+            http.clone(),
+        )));
+    }
+
     // Raspberry Shake: the citizen seismograph network, from its FDSN
     // station service. Six-hourly; stations do not move.
     if enabled("seismographs") {

@@ -183,6 +183,13 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#80cbc4".into();
         s.min_zoom = 4;
     }),
+    ("river-discharge", |s| {
+        // Eleven hundred river cells across England; from z6, like the
+        // gauges they sit on, in the gauges' blue darkened: the same
+        // rivers, modelled rather than measured.
+        s.color = "#2f6fb0".into();
+        s.min_zoom = 6;
+    }),
     ("seismographs", |s| {
         // Six thousand worldwide, clustered where people are; from z3 so
         // the question "where can the ground be heard" is asked of a
