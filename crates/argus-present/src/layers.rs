@@ -1798,7 +1798,7 @@ mod tests {
 
     #[test]
     fn a_river_cell_reads_its_flow_and_trend_and_names_the_river() {
-        let c = present("river-discharge", serde_json::json!({"discharge_m3s": 0.34, "discharge_7d_m3s": [3.14, 1.67, 0.8, 0.53, 0.42, 0.76, 0.34], "discharge_week_ago_m3s": 3.14, "discharge_7d_peak_m3s": 3.14, "model_day": "2026-09-16", "rivers": ["River Thames", "River Crane"], "place": "River Thames at Kingston upon Thames", "gauges_in_cell": 3}), "x");
+        let c = present("river-discharge", serde_json::json!({"discharge_m3s": 0.34, "discharge_7d_m3s": [3.12, 1.67, 0.8, 0.53, 0.42, 0.76, 0.34], "discharge_week_ago_m3s": 3.12, "discharge_7d_peak_m3s": 3.12, "model_day": "2026-09-16", "rivers": ["River Thames", "River Crane"], "place": "River Thames at Kingston upon Thames", "gauges_in_cell": 3}), "x");
         assert_eq!(c.title, "River Thames at Kingston upon Thames");
         assert_eq!(c.summary.as_deref(), Some("Modelled flow of 0.3 m³/s today, falling — 3.1 m³/s a week ago. A 5 km river-model cell, not the gauge's own reading."));
         assert_eq!(value(&c, "Last 7 days"), "3.1 → 1.7 → 0.8 → 0.5 → 0.4 → 0.8 → 0.3");
