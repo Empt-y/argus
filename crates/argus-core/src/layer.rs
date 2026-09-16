@@ -200,6 +200,37 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#b5651d".into();
         s.min_zoom = 11;
     }),
+    ("submarine-cables", |s| {
+        // Seven hundred lines across every ocean; the whole point is the
+        // pattern between continents, so from z0. A cool grey-blue, as
+        // the map they come from draws them.
+        s.geometry = GeometryClass::Line;
+        s.color = "#7f9cc7".into();
+        s.min_zoom = 0;
+        s.max_zoom = 12;
+    }),
+    ("cable-landings", |s| {
+        // Two thousand points on coasts; from z3, where a coastline reads.
+        s.geometry = GeometryClass::Point;
+        s.color = "#7f9cc7".into();
+        s.min_zoom = 3;
+    }),
+    ("power-grid", |s| {
+        // Lines, fenced substations and plant outlines together, so Mixed;
+        // tens of thousands of objects across Britain, so from z6, where a
+        // 400 kV line is still a line rather than a scribble. Copper.
+        s.geometry = GeometryClass::Mixed;
+        s.color = "#d4a05a".into();
+        s.min_zoom = 6;
+    }),
+    ("fires", |s| {
+        // Two hundred thousand hot pixels a day worldwide, densest across
+        // Africa in the burning season. From z2, where a continent's fire
+        // front reads as a front. Orange-red, hotter than the quakes.
+        s.geometry = GeometryClass::Point;
+        s.color = "#ff6b35".into();
+        s.min_zoom = 2;
+    }),
     ("ground-stations", |s| {
         // Four and a half thousand worldwide, most of them dark, so from
         // z3 — the question is where the network can hear from, asked of a

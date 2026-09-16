@@ -110,6 +110,10 @@ pub fn card(subject: Subject<'_>) -> Card {
         "sea-state" => layers::sea_state(subject, attrs, &mut used),
         "seismographs" => layers::seismograph(subject, attrs, &mut used),
         "street-crime" => layers::street_crime(subject, attrs, &mut used),
+        "submarine-cables" => layers::cable(subject, attrs, &mut used),
+        "cable-landings" => layers::cable_landing(subject, attrs, &mut used),
+        "power-grid" => layers::power(subject, attrs, &mut used),
+        "fires" => layers::fire(subject, attrs, &mut used),
         _ => generic::card(subject, attrs, &mut used),
     };
     // Whatever the presenter did not claim is still shown, prettified, so a

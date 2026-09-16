@@ -138,6 +138,15 @@ enabled = true    # Raspberry Shake citizen seismographs, worldwide, six-hourly
 [sources.street-crime]
 enabled = true    # data.police.uk street-level crime, a month at a time per [[aoi]], every three days
 
+[sources.submarine-cables]
+enabled = true    # TeleGeography submarine cable routes, worldwide, weekly (707 requests at one a second)
+
+[sources.cable-landings]
+enabled = true    # TeleGeography cable landing points and what lands there, weekly
+
+[sources.power-grid]
+enabled = true    # OpenStreetMap power lines, substations and plants per [[aoi]] via Overpass, weekly
+
 # Keyed sources, off until a credential is supplied.
 [sources.buses]
 enabled = true
@@ -153,7 +162,11 @@ enabled = false
 # credentials = { api_key = "" }
 
 [sources.firms]
-enabled = false
+enabled = true
+# Every VIIRS active-fire detection of the last day, worldwide, every half
+# hour. Needs a FIRMS MAP_KEY — free, from
+# https://firms.modaps.eosdis.nasa.gov/api/map_key/ — which is not an
+# Earthdata token. Without one the layer reports "key required".
 # credentials = { map_key = "" }
 
 [sources.tomtom]

@@ -630,6 +630,40 @@ fn build_sources(
         )));
     }
 
+    // Infrastructure (Phase 8). Submarine cables and their landings from
+    // TeleGeography, weekly, 707 per-cable records at one a second; the
+    // power grid from OpenStreetMap through Overpass in two-degree tiles,
+    // weekly, on the patient client because a dense tile takes a minute.
+    if enabled("submarine-cables") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::SubmarineCables::cables(
+            http.clone(),
+        )));
+    }
+    if enabled("cable-landings") {
+        sources.push(std::sync::Arc::new(
+            argus_ingest::sources::SubmarineCables::landing_points(http.clone()),
+        ));
+    }
+    if enabled("power-grid") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::PowerGrid::new(
+            patient_http.clone(),
+        )));
+    }
+
+    // Fires (Phase 7): every VIIRS detection of the last day, worldwide,
+    // every half hour. Keyed: the FIRMS MAP_KEY, which is not the
+    // Earthdata token.
+    if enabled("firms") {
+        let key = config
+            .sources
+            .get("firms")
+            .and_then(|s| s.credentials.get(argus_ingest::sources::firms::MAP_KEY))
+            .cloned();
+        sources.push(std::sync::Arc::new(
+            argus_ingest::sources::Fires::new(http.clone()).with_map_key(key),
+        ));
+    }
+
     // TfL: disruptions on London's red routes, dated by their last update
     // so a month of roadworks stays on the map while TfL keeps touching it.
     if enabled("road-disruptions") {

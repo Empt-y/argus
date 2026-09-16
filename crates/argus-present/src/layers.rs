@@ -1170,6 +1170,234 @@ pub fn street_crime<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, use
     card
 }
 
+// --- submarine cables ---------------------------------------------------------
+
+pub fn cable<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "Submarine cable");
+    let name = t.str("name").unwrap_or(subject.key).to_string();
+    let planned = t.bool("planned") == Some(true);
+    card.title = name.clone();
+    if planned {
+        card.subtitle = Some("Submarine cable, planned".into());
+    }
+    let length = t.f64("length_km");
+    let rfs = t.str("ready_for_service").map(str::to_string);
+    let landings = t.value("landings").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let landing_names: Vec<String> = landings.iter().filter_map(|l| l.get("name").and_then(|n| n.as_str()).map(str::to_string)).collect();
+    let countries: Vec<String> = {
+        let mut c: Vec<String> = landings.iter().filter_map(|l| l.get("country").and_then(|n| n.as_str()).map(str::to_string)).collect();
+        c.sort();
+        c.dedup();
+        c
+    };
+    let mut summary = String::new();
+    if let Some(km) = length {
+        summary.push_str(&format!("{} km", num(km, 0)));
+    }
+    if !countries.is_empty() {
+        if !summary.is_empty() {
+            summary.push_str(", ");
+        }
+        summary.push_str(&format!("landing in {}", if countries.len() <= 4 { countries.join(", ") } else { format!("{} countries", countries.len()) }));
+    }
+    match (&rfs, planned) {
+        (Some(r), true) => summary.push_str(&format!(", planned for {r}")),
+        (Some(r), false) => summary.push_str(&format!(", in service since {r}")),
+        _ => {}
+    }
+    if !summary.is_empty() {
+        let mut s = summary;
+        if let Some(f) = s.get(..1) {
+            let up = f.to_uppercase();
+            s.replace_range(..1, &up);
+        }
+        card.summary = Some(s + ". The route drawn is schematic, not the surveyed track on the seabed.");
+    }
+    let mut rows = Vec::new();
+    push(&mut rows, "Length", length.map(|km| format!("{} km", num(km, 0))));
+    t.skip("length_text");
+    push(&mut rows, if planned { "Planned for" } else { "In service since" }, rfs);
+    t.skip("ready_for_service_year");
+    let owners = t.strings("owners");
+    if !owners.is_empty() {
+        rows.push(row("Owners", owners.join(", ")));
+    }
+    let suppliers = t.strings("suppliers");
+    if !suppliers.is_empty() {
+        rows.push(row("Built by", suppliers.join(", ")));
+    }
+    push(&mut rows, "Notes", t.str("notes").map(str::to_string));
+    t.skip("cable_id");
+    t.skip("map_color");
+    t.skip("route");
+    t.skip("landing_count");
+    card.sections.extend(section(None, rows));
+    if !landing_names.is_empty() {
+        card.sections.extend(section(Some(&format!("Landings ({})", landing_names.len())), landing_names.into_iter().map(|n| row("", n)).collect()));
+    }
+    if let Some(url) = t.str("url") {
+        card.links.push(Link { label: "Cable's own site".into(), url: url.to_string() });
+    }
+    card
+}
+
+pub fn cable_landing<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "Submarine cable landing point");
+    card.title = t.str("name").unwrap_or(subject.key).to_string();
+    let cables = t.strings("cables");
+    let planned = t.strings("planned_cables");
+    t.skip("cable_count");
+    t.skip("landing_id");
+    card.summary = Some(match (cables.len(), planned.len()) {
+        (0, 0) => "A landing point with no cable recorded against it.".to_string(),
+        (n, 0) => format!("{n} cable{} come{} ashore here.", if n == 1 { "" } else { "s" }, if n == 1 { "s" } else { "" }),
+        (0, p) => format!("{p} planned cable{} will land here.", if p == 1 { "" } else { "s" }),
+        (n, p) => format!("{n} cable{} ashore here, {p} more planned.", if n == 1 { "" } else { "s" }),
+    });
+    if t.bool("location_tbd") == Some(true) {
+        card.summary = Some(format!("{} The exact site is still to be decided.", card.summary.take().unwrap_or_default()));
+    }
+    if !cables.is_empty() {
+        card.sections.extend(section(Some("Cables"), cables.into_iter().map(|c| row("", c)).collect()));
+    }
+    if !planned.is_empty() {
+        card.sections.extend(section(Some("Planned"), planned.into_iter().map(|c| row("", c)).collect()));
+    }
+    card
+}
+
+// --- power grid ---------------------------------------------------------------
+
+pub fn power<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let kind = t.str("kind").unwrap_or("");
+    let mut card = base(
+        subject,
+        match kind {
+            "line" => "Power line (OpenStreetMap)",
+            "substation" => "Substation (OpenStreetMap)",
+            "plant" => "Power plant (OpenStreetMap)",
+            _ => "Power grid (OpenStreetMap)",
+        },
+    );
+    let kv = t.f64("voltage_kv");
+    let levels = t.value("voltages_kv").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_f64()).map(|x| num(x, 0)).collect::<Vec<_>>()).unwrap_or_default();
+    let mut rows = Vec::new();
+    push(&mut rows, "Name", t.str("name").map(str::to_string));
+    match (kv, levels.len()) {
+        (Some(_), n) if n > 1 => rows.push(row("Voltage", format!("{} kV", levels.join(" / ")))),
+        (Some(kv), _) => rows.push(row("Voltage", format!("{} kV", num(kv, 0)))),
+        _ => {}
+    }
+    match kind {
+        "line" => {
+            let circuits = t.i64("circuits");
+            let cables = t.i64("cables");
+            card.summary = Some(match (kv, circuits) {
+                (Some(kv), Some(c)) => format!("A {} kV overhead line with {c} circuit{}.", num(kv, 0), if c == 1 { "" } else { "s" }),
+                (Some(kv), None) => format!("A {} kV line.", num(kv, 0)),
+                _ => "A power line.".to_string(),
+            });
+            push(&mut rows, "Circuits", circuits.map(|c| c.to_string()));
+            push(&mut rows, "Conductors", cables.map(|c| c.to_string()));
+            push(&mut rows, "Frequency", t.f64("frequency_hz").map(|f| format!("{} Hz", num(f, 0))));
+            push(&mut rows, "Type", t.str("line_type").map(words));
+            push(&mut rows, "Location", t.str("location").map(words));
+        }
+        "substation" => {
+            let st = t.str("substation_type").map(words);
+            card.summary = Some(match (&st, kv) {
+                (Some(s), Some(kv)) => format!("A {} substation at {} kV.", s.to_lowercase(), num(kv, 0)),
+                (Some(s), None) => format!("A {} substation.", s.to_lowercase()),
+                (None, Some(kv)) => format!("A substation at {} kV.", num(kv, 0)),
+                _ => "A substation.".to_string(),
+            });
+            push(&mut rows, "Type", st);
+            push(&mut rows, "Owner", t.str("owner").map(str::to_string));
+        }
+        "plant" => {
+            let source = t.str("source").map(words);
+            let method = t.str("method").map(words);
+            let mw = t.f64("output_mw");
+            card.summary = Some(match (&source, mw) {
+                (Some(s), Some(mw)) => format!("A {} plant with {} MW of electrical output.", s.to_lowercase(), num(mw, 1)),
+                (Some(s), None) => format!("A {} plant.", s.to_lowercase()),
+                (None, Some(mw)) => format!("A power plant with {} MW of electrical output.", num(mw, 1)),
+                _ => "A power plant.".to_string(),
+            });
+            push(&mut rows, "Source", source);
+            push(&mut rows, "Method", method);
+            push(&mut rows, "Output", mw.map(|mw| format!("{} MW", num(mw, 1))));
+            push(&mut rows, "Commissioned", t.str("start_date").map(str::to_string));
+            push(&mut rows, "REPD id", t.str("repd_id").map(str::to_string));
+        }
+        _ => {}
+    }
+    push(&mut rows, "Operator", t.str("operator").map(str::to_string));
+    push(&mut rows, "Reference", t.str("ref").map(str::to_string));
+    card.sections.extend(section(None, rows));
+    if let Some(osm) = t.str("osm") {
+        card.links.push(Link { label: "On OpenStreetMap".into(), url: format!("https://www.openstreetmap.org/{osm}") });
+    }
+    card
+}
+
+// --- fires ------------------------------------------------------------------
+
+pub fn fire<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "Active fire detection (NASA FIRMS, VIIRS)");
+    let frp = t.f64("frp_mw");
+    let confidence = t.str("confidence");
+    let (conf_words, conf_note) = match confidence {
+        Some("h") => ("high", "a strong thermal signature; almost certainly a fire"),
+        Some("n") => ("nominal", "the usual detection; a fire, a flare or something else hot"),
+        Some("l") => ("low", "a weak signature; may be a hot surface rather than a flame"),
+        _ => ("unknown", ""),
+    };
+    let daynight = t.str("daynight");
+    let sat = t.str("satellite").unwrap_or("VIIRS").to_string();
+    let acquired = t.str("acquired").and_then(when);
+    card.title = match (frp, confidence) {
+        (Some(f), Some("l")) => format!("Hot spot, {} MW", num(f, 0)),
+        (Some(f), _) => format!("Fire, {} MW", num(f, 0)),
+        _ => "Fire detection".to_string(),
+    };
+    card.summary = Some(format!(
+        "A 375 m pixel that {} saw burning{}{} with {conf_words} confidence. The satellite cannot tell a wildfire from a flare, a field or a furnace.",
+        sat,
+        acquired.as_deref().map(|a| format!(" at {a}")).unwrap_or_default(),
+        frp.map(|f| format!(", radiating {} MW", num(f, 0))).unwrap_or_default()
+    ));
+    let mut rows = Vec::new();
+    push(&mut rows, "Fire radiative power", frp.map(|f| format!("{} MW", num(f, 1))));
+    if confidence.is_some() {
+        rows.push(row_note("Confidence", conf_words, conf_note));
+    }
+    push(&mut rows, "Brightness (I-4)", t.f64("brightness_k").map(|k| format!("{} K", num(k, 1))));
+    push(&mut rows, "Brightness (I-5)", t.f64("brightness_ti5_k").map(|k| format!("{} K", num(k, 1))));
+    push(&mut rows, "Seen", acquired);
+    push(
+        &mut rows,
+        "Pass",
+        daynight.map(|d| match d {
+            "D" => "daytime".to_string(),
+            "N" => "night".to_string(),
+            other => other.to_string(),
+        }),
+    );
+    rows.push(row("Satellite", sat));
+    push(&mut rows, "Instrument", t.str("instrument").map(str::to_string));
+    if let (Some(s), Some(tr)) = (t.f64("scan_km"), t.f64("track_km")) {
+        rows.push(row_note("Pixel", format!("{} × {} km", num(s, 2), num(tr, 2)), "the footprint of the detection, larger towards the edge of the swath"));
+    }
+    t.skip("version");
+    card.sections.extend(section(None, rows));
+    card
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{card, Subject};
@@ -1297,5 +1525,43 @@ mod tests {
         assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
         let asb = present("street-crime", serde_json::json!({"category": "anti-social-behaviour", "month": "2026-07", "street": "On or near Earlstoke Street", "street_id": 1, "location_type": "Force", "snapped": true}), "x");
         assert_eq!(value(&asb, "Outcome"), "none recorded");
+    }
+
+    #[test]
+    fn a_cable_reads_its_landings_and_says_the_route_is_schematic() {
+        let c = present("submarine-cables", serde_json::json!({"cable_id": "2africa", "name": "2Africa", "map_color": "#939597", "route": "schematic", "length_km": 45000.0, "length_text": "45,000 km", "owners": ["Bayobab", "Meta"], "suppliers": ["ASN"], "ready_for_service": "2024", "ready_for_service_year": 2024, "planned": false, "url": "https://www.2africacable.net/", "landing_count": 2, "landings": [{"id": "luanda-angola", "name": "Luanda, Angola", "country": "Angola"}, {"id": "bude-united-kingdom", "name": "Bude, United Kingdom", "country": "United Kingdom"}]}), "2Africa");
+        assert_eq!(c.title, "2Africa");
+        assert_eq!(c.summary.as_deref(), Some("45,000 km, landing in Angola, United Kingdom, in service since 2024. The route drawn is schematic, not the surveyed track on the seabed."));
+        assert_eq!(value(&c, "Owners"), "Bayobab, Meta");
+        assert!(c.sections.iter().any(|s| s.heading.as_deref() == Some("Landings (2)")));
+        assert!(c.links.iter().any(|l| l.label.contains("own site")));
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
+        let l = present("cable-landings", serde_json::json!({"landing_id": "bude-united-kingdom", "name": "Bude, United Kingdom", "cables": ["2Africa", "Apollo"], "planned_cables": ["Amitié"], "cable_count": 3}), "Bude");
+        assert_eq!(l.summary.as_deref(), Some("2 cables ashore here, 1 more planned."));
+        assert!(l.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{l:#?}");
+    }
+
+    #[test]
+    fn the_grid_reads_as_lines_substations_and_plants() {
+        let line = present("power-grid", serde_json::json!({"osm": "way/1", "kind": "line", "name": "Bramley - Fleet", "operator": "National Grid", "voltage_kv": 400.0, "voltages_kv": [400.0, 275.0], "cables": 6, "circuits": 2}), "400 kV line: Bramley - Fleet");
+        assert_eq!(line.summary.as_deref(), Some("A 400 kV overhead line with 2 circuits."));
+        assert_eq!(value(&line, "Voltage"), "400 / 275 kV");
+        assert!(line.links.iter().any(|l| l.url == "https://www.openstreetmap.org/way/1"));
+        assert!(line.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{line:#?}");
+        let plant = present("power-grid", serde_json::json!({"osm": "relation/6", "kind": "plant", "name": "Didcot B", "source": "gas", "method": "combustion", "output_mw": 2000.0, "repd_id": "123"}), "Didcot B");
+        assert_eq!(plant.summary.as_deref(), Some("A gas plant with 2,000 MW of electrical output."));
+        assert!(plant.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{plant:#?}");
+        let sub = present("power-grid", serde_json::json!({"osm": "node/2", "kind": "substation", "name": "Bramley", "substation_type": "transmission", "voltage_kv": 400.0, "voltages_kv": [400.0, 132.0], "owner": "NGET"}), "Bramley (400 kV)");
+        assert_eq!(sub.summary.as_deref(), Some("A transmission substation at 400 kV."));
+        assert!(sub.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{sub:#?}");
+    }
+
+    #[test]
+    fn a_fire_says_what_a_pixel_can_and_cannot_tell() {
+        let c = present("fires", serde_json::json!({"satellite": "NOAA-20", "instrument": "VIIRS", "brightness_k": 367.0, "brightness_ti5_k": 300.1, "frp_mw": 45.8, "scan_km": 0.4, "track_km": 0.4, "confidence": "h", "daynight": "D", "version": "2.0NRT", "acquired": "2026-09-16T12:30:00Z"}), "Fire, 46 MW, high confidence");
+        assert_eq!(c.title, "Fire, 46 MW");
+        assert_eq!(c.summary.as_deref(), Some("A 375 m pixel that NOAA-20 saw burning at 16 Sep 12:30 UTC, radiating 46 MW with high confidence. The satellite cannot tell a wildfire from a flare, a field or a furnace."));
+        assert_eq!(value(&c, "Pass"), "daytime");
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
     }
 }

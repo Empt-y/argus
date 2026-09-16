@@ -16,7 +16,7 @@ this box, and where did it reappear".
 This is a personal project and it is early, but it works end to end. As of
 September 2026:
 
-- A Rust daemon (`argusd`) polls 26 upstream feeds into 23 layers, with
+- A Rust daemon (`argusd`) polls 30 upstream feeds into 27 layers, with
   provider failover chains, per-provider budgets and a disk budget.
 - Postgres/PostGIS/TimescaleDB store with raw observations rolled up into
   tracks and daily summaries.
@@ -38,8 +38,11 @@ triangulates, the SatNOGS ground stations with what each is hearing, TfL's road 
 London, the carbon intensity of the grid in each of Britain's fourteen
 distribution regions, Europe's offshore platforms and wind farms, modelled
 air quality, pollen and sea state sampled on a lattice over each area
-(Open-Meteo), the Raspberry Shake citizen seismograph network, and a month
-of street-level crime for England and Wales (data.police.uk).
+(Open-Meteo), the Raspberry Shake citizen seismograph network, a month of
+street-level crime for England and Wales (data.police.uk), every submarine
+cable and where it lands (TeleGeography), the power grid — lines, substations
+and plants — from OpenStreetMap, and every active fire the VIIRS satellites
+saw in the last day (NASA FIRMS, keyed).
 
 Not built yet: satellite imagery and fire detections, infrastructure layers
 (power grid, cables, BGP), SDR receivers, phone-as-sensor, the AR sky view.
@@ -162,10 +165,11 @@ steady-state figures from a weekday, before any TimescaleDB compression.
 | `river-gauges` | ~0.4 M | ~0.2 GB | 4,000 gauges every 15 min |
 | `radiosondes` | ~0.3 M | ~0.1 GB | tracks of every balloon aloft |
 | `metars` | ~0.2 M | ~0.1 GB | 5,000 aerodromes, one row per new report |
+| `fires` | ~0.2 M | ~0.1 GB | 200,000 VIIRS detections a day worldwide, each written once |
 | `street-crime` | ~0.2 M | ~0.1 GB | half a million crimes a month across England and Wales, rewritten every three days |
 | `argo-floats` | ~0.1 M | ~50 MB | 4,300 floats dated by poll time, hourly |
 | `seismographs` | < 0.1 M | ~10 MB | 6,200 stations dated by poll time, six-hourly |
-| everything else | < 0.1 M | < 50 MB | buoys, meteors, quakes, alerts, SIGMETs, TfL, carbon intensity, EMODnet, Open-Meteo lattices |
+| everything else | < 0.1 M | < 50 MB | buoys, meteors, quakes, alerts, SIGMETs, TfL, carbon intensity, EMODnet, Open-Meteo lattices, cables and the grid (features: written only on change) |
 
 The dials, all in `argus.toml`:
 
@@ -223,8 +227,8 @@ that has been checked, what it actually returns, and what went wrong.
 | 4 | Web client | done |
 | 5 | Android client | done |
 | 6 | Alerts, geofences, Tailscale | done |
-| 7 | Earth observation: imagery, fires, nightlights | |
-| 8 | Infrastructure and internet: grid, cables, BGP | |
+| 7 | Earth observation: imagery, fires, nightlights | fires done |
+| 8 | Infrastructure and internet: grid, cables, BGP | grid and cables done |
 | 9 | Conflict and news | |
 | 10 | Self-collected: SDR, phone-as-sensor | |
 | 11 | Derived analytics and AR sky view | |

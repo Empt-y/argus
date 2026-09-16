@@ -42,6 +42,10 @@ Entity kinds refer to `argus_core::EntityKind`.
 | `sea-state` | `openmeteo.rs` | Open-Meteo wave model, the same lattice |
 | `seismographs` | `raspberryshake.rs` | Raspberry Shake citizen seismographs, FDSN |
 | `street-crime` | `police.rs` | data.police.uk street-level crime, a month at a time |
+| `submarine-cables` | `cables.rs` | TeleGeography cable routes, schematic, with owners and landings |
+| `cable-landings` | `cables.rs` | TeleGeography landing points and what lands there |
+| `power-grid` | `osmpower.rs` | OSM power lines, substations and plants via Overpass, per AOI |
+| `fires` | `firms.rs` | NASA FIRMS VIIRS active fires, worldwide, last day (keyed) |
 
 Notes on the ones that had something to teach follow.
 
@@ -355,6 +359,40 @@ original 50 Hz unit. Live count: 2,067 1D, 1,636 3D, 1,784 4D, 540 Shake &
 Boom, 140 Boom; 364 in the British Isles. 17 stations at Null Island are
 dropped. Kind `station`, poll time as observation time, six-hourly.
 
+### TeleGeography submarine cables — done
+`submarinecablemap.com/api/v3/cable/cable-geo.json` (728 MultiLineStrings,
+740 KB), `landing-point/landing-point-geo.json` (1,925 points), `cable/all.json`
+(707 ids) and `cable/{id}.json` for owners, suppliers, length ("45,000 km" as
+text), RFS year, planned flag and landing points. CC BY-SA 4.0. The routes are
+schematic paths between landings, not seabed tracks, and the card says so.
+Two `feature` layers, weekly; the per-cable records are 707 requests at the
+one-a-second pace, so a poll is twelve minutes, and a failed record leaves a
+cable written from its route alone.
+
+### OpenStreetMap power grid via Overpass — done
+`overpass-api.de/api/interpreter?data=…` with `out geom` for
+`power=line|substation|plant` in 2° tiles aligned to the grid. A 3° tile
+around London was 3.5 MB in 60 s; 2° tiles on the patient client. **Three
+quarters of substations are untagged 11 kV street kiosks** (14,536 of 20,588
+in one tile): kept only when `substation=` says what it is or `voltage` ≥ 33
+kV, `minor_distribution` excluded in the query. `voltage` is a `;` list on
+double-circuit lines. Plant relations carry outer way members with geometry
+under `out geom`; a closed one is the outline. Key `osm:way/123`; OSM ids do
+not expire, so a split way leaves its old id behind. Live: the Berkshire tile
+gave 2,120 lines, 1,343 substations, 401 plants. ODbL.
+
+### NASA FIRMS active fires — done
+`firms.modaps.eosdis.nasa.gov/api/area/csv/{MAP_KEY}/{product}/world/1` for
+`VIIRS_SNPP_NRT`, `VIIRS_NOAA20_NRT`, `VIIRS_NOAA21_NRT`: ~70k rows and
+5.5 MB each in two seconds, ~200k detections a day worldwide. Keyed by a
+FIRMS MAP_KEY (not an Earthdata token) under `[sources.firms]`; a bad key
+answers `Invalid MAP_KEY.` with status 200, which the decoder turns into an
+`Auth` error. Quota 5,000 transactions per ten minutes and a world day costs
+about 36, so a three-product poll is ~110; half-hourly. `acq_time` is HHMM
+**unpadded** (`7` = 00:07). No detection id: the key is satellite + position +
+acquisition minute, and the driver remembers a day's keys so a re-read
+writes only what is new. Kind `event`, dated by acquisition.
+
 ### Others, verified keyless
 - **TfL Unified API** — keyless line status and bus arrivals with vehicle
   registrations; road disruptions are built (below). BODS carries TfL's bus
@@ -428,9 +466,13 @@ Easiest first, roughly most reusable first:
 12. ~~EMODnet platforms and wind farms~~ — done, and the feature path with them.
 13. ~~Open-Meteo, FDSN Raspberry Shake, data.police.uk~~ — done; the
     month-only dates are stamped at poll time with the month carried.
-14. Next candidates from the keyless list: wspr.live (needs server-side
+14. ~~Phase 8 infrastructure: submarine cables, power grid~~ — done, and
+    ~~Phase 7 fires (FIRMS)~~ — done, keyed.
+15. Next candidates from the keyless list: wspr.live (needs server-side
     aggregation), Open-Meteo flood (needs river points), NASA CNEOS
-    fireballs, OurAirports, AuroraWatch UK, FSA food hygiene.
+    fireballs, OurAirports, AuroraWatch UK, FSA food hygiene. Phase 7
+    still unbuilt: imagery, nightlights. Phase 8: BGP needs a geolocation
+    step before it is spatial.
 
 ## Process notes
 
