@@ -4,9 +4,11 @@
 //! CNEOS publishes every fireball reported by the sensors that watch for
 //! other things — the date to the second, the peak brightness position
 //! and altitude, the total radiated energy, the impact energy in kilotons
-//! of TNT, and for a third of them the velocity vector. 887 events since
-//! 1988 in one 80 KB answer; forty or so a year. A tenth of the records
-//! have no position and are not placed.
+//! of TNT, and for a third of them the velocity vector. `req-loc=true`
+//! asks only for the records with a position: 887 of them since 1988 in
+//! one 80 KB answer, forty or so a year. The one from April 1988 is left
+//! out on purpose — the store refuses anything before 1990 as a decode
+//! failure, and one record is not worth loosening that for.
 //!
 //! An [`EntityKind::Event`] dated by the detection, so the layer is usually
 //! empty in the live view and fills in as the DVR scrubs back; a Chelyabinsk
@@ -69,7 +71,7 @@ impl Source for Fireballs {
         let feed: Feed = self.http.get_json(API_URL).await?;
         let now = Utc::now();
         let decoded = decode(&feed, &self.descriptor.id, now)?;
-        tracing::info!(source = %self.descriptor.id, fireballs = decoded.observations.len(), unplaced = decoded.unplaced, "fireballs read");
+        tracing::info!(source = %self.descriptor.id, fireballs = decoded.observations.len(), unplaced = decoded.unplaced, before_1990 = decoded.before_floor, "fireballs read");
         Ok(decoded.observations)
     }
 }
@@ -89,7 +91,16 @@ pub struct Feed {
 pub struct Decoded {
     pub observations: Vec<Observation>,
     pub unplaced: usize,
+    /// Older than the store accepts.
+    pub before_floor: usize,
 }
+
+/// The store's floor is 1990; the same, so a record from 1988 is skipped
+/// here rather than refused there as a driver bug.
+const EARLIEST: DateTime<Utc> = chrono::DateTime::<Utc>::from_naive_utc_and_offset(
+    chrono::NaiveDate::from_ymd_opt(1990, 1, 1).unwrap().and_hms_opt(0, 0, 0).unwrap(),
+    Utc,
+);
 
 pub fn decode(feed: &Feed, source_id: &SourceId, now: DateTime<Utc>) -> Result<Decoded, SourceError> {
     let col = |name: &str| feed.fields.iter().position(|f| f == name);
@@ -104,11 +115,16 @@ pub fn decode(feed: &Feed, source_id: &SourceId, now: DateTime<Utc>) -> Result<D
 
     let mut observations = Vec::with_capacity(feed.data.len());
     let mut unplaced = 0;
+    let mut before_floor = 0;
     for row in &feed.data {
         let field = |c: Option<usize>| c.and_then(|i| row.get(i)).and_then(|v| v.as_deref()).map(str::trim).filter(|s| !s.is_empty());
         let num = |c: Option<usize>| field(c).and_then(|s| s.parse::<f64>().ok());
         let Some(date) = field(Some(c_date)) else { continue };
         let Some(at) = chrono::NaiveDateTime::parse_from_str(date, "%Y-%m-%d %H:%M:%S").ok().map(|t| t.and_utc()) else { continue };
+        if at < EARLIEST {
+            before_floor += 1;
+            continue;
+        }
         let (Some(lat), Some(lon)) = (num(Some(c_lat)), num(Some(c_lon))) else {
             unplaced += 1;
             continue;
@@ -150,7 +166,7 @@ pub fn decode(feed: &Feed, source_id: &SourceId, now: DateTime<Utc>) -> Result<D
                 .with_attrs(serde_json::Value::Object(attrs)),
         );
     }
-    Ok(Decoded { observations, unplaced })
+    Ok(Decoded { observations, unplaced, before_floor })
 }
 
 #[cfg(test)]
@@ -160,7 +176,8 @@ mod tests {
     const FEED: &str = r#"{"signature":{"source":"NASA/JPL Fireball Data API","version":"1.2"},"count":"3","fields":["date","energy","impact-e","lat","lat-dir","lon","lon-dir","alt","vel","vx","vy","vz"],"data":[
       ["2026-09-15 11:26:13","2.2","0.079","37.6","S","161.6","W","37.0",null,null,null,null],
       ["2013-02-15 03:20:33","375000","440","54.8","N","61.1","E","23.3","18.6","12.8","-13.3","-2.4"],
-      ["2026-09-11 10:18:03","6.1","0.2",null,null,null,null,null,null,null,null,null]
+      ["2026-09-11 10:18:03","6.1","0.2",null,null,null,null,null,null,null,null,null],
+      ["1988-04-15 03:03:10","1.0","0.04","10.0","N","20.0","E",null,null,null,null,null]
     ]}"#;
 
     #[test]
@@ -168,6 +185,7 @@ mod tests {
         let feed: Feed = serde_json::from_str(FEED).unwrap();
         let d = decode(&feed, &SourceId::new("cneos-fireballs"), Utc::now()).unwrap();
         assert_eq!(d.unplaced, 1);
+        assert_eq!(d.before_floor, 1, "1988 is before the store's floor");
         assert_eq!(d.observations.len(), 2);
         let small = &d.observations[0];
         assert_eq!(small.entity.key, "cneos:20260915T112613");

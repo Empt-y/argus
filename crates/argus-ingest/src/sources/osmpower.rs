@@ -63,6 +63,14 @@ const QUERY_TIMEOUT_SECS: u32 = 110;
 /// does not say what kind it is.
 const MIN_UNTYPED_SUBSTATION_KV: f64 = 33.0;
 
+/// Overpass gives an address two slots and holds a slot for a while
+/// after each heavy query; a tile sent the second the previous one
+/// finished is refused with a 429. On a refusal the tile waits this long
+/// (or what `Retry-After` says) and is asked again, up to
+/// [`RATE_LIMIT_RETRIES`] times, before it is given up for this cycle.
+const RATE_LIMIT_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+const RATE_LIMIT_RETRIES: usize = 6;
+
 pub struct PowerGrid {
     descriptor: SourceDescriptor,
     http: HttpClient,
@@ -168,7 +176,15 @@ impl Source for PowerGrid {
             }
             let url = reqwest::Url::parse_with_params(OVERPASS_URL, &[("data", query(tile))])
                 .map_err(|e| SourceError::Decode(e.to_string()))?;
-            match self.http.get_bytes(url.as_str()).await {
+            let mut result = self.http.get_bytes(url.as_str()).await;
+            for _ in 0..RATE_LIMIT_RETRIES {
+                let Err(SourceError::RateLimited { retry_after }) = &result else { break };
+                let wait = retry_after.unwrap_or(RATE_LIMIT_WAIT).max(std::time::Duration::from_secs(5));
+                tracing::debug!(source = %self.descriptor.id, tile = ?tile, wait_s = wait.as_secs(), "overpass slot busy; waiting");
+                tokio::time::sleep(wait).await;
+                result = self.http.get_bytes(url.as_str()).await;
+            }
+            match result {
                 Ok(bytes) => match decode(&bytes, &self.descriptor.id, now) {
                     Ok((obs, k)) => {
                         kept.add(&k);

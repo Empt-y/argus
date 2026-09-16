@@ -410,8 +410,10 @@ dropped. Daily, `measure`, `Modeled`, dated by the model day, ~1,100 calls.
 
 ### CNEOS fireballs and OurAirports — done
 `ssd-api.jpl.nasa.gov/fireball.api?req-loc=true&vel-comp=true`: 887 rows since
-1988 as `fields` + `data` arrays of strings, 80 KB; a tenth have no position;
-`lat-dir`/`lon-dir` are separate hemisphere letters. Chelyabinsk is
+1988 as `fields` + `data` arrays of strings, 80 KB (`req-loc=true` already
+drops the records without a position); `lat-dir`/`lon-dir` are separate
+hemisphere letters. The store refuses anything before 1990, so the one 1988
+record is skipped in the driver rather than logged as a driver bug. Chelyabinsk is
 `2013-02-15 03:20:26`, 441 kt. Kind `event` dated by detection, so the live
 view is usually empty and the DVR fills it — that is honest for forty a
 year. OurAirports: `raw.githubusercontent.com/davidmegginson/ourairports-data/main/airports.csv`
