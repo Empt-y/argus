@@ -38,6 +38,10 @@ Entity kinds refer to `argus_core::EntityKind`.
 | `carbon-intensity` | `carbon.rs` | Grid carbon intensity on DNO boundaries |
 | `offshore-platforms` | `emodnet.rs` | EMODnet oil and gas platforms |
 | `wind-farms` | `emodnet.rs` | EMODnet offshore wind farm outlines |
+| `air-quality` | `openmeteo.rs` | CAMS air quality and pollen, a lattice over each AOI |
+| `sea-state` | `openmeteo.rs` | Open-Meteo wave model, the same lattice |
+| `seismographs` | `raspberryshake.rs` | Raspberry Shake citizen seismographs, FDSN |
+| `street-crime` | `police.rs` | data.police.uk street-level crime, a month at a time |
 
 Notes on the ones that had something to teach follow.
 
@@ -182,11 +186,25 @@ in feet to metres would print precision the sensor doesn't have.
 
 ## Verified, ready to build
 
-### Open-Meteo (air quality, pollen, marine, flood)
-`air-quality-api.open-meteo.com/v1/air-quality`, `marine-api…/v1/marine`,
-`flood-api…/v1/flood`. Keyless, CC BY 4.0, non-commercial. Pollen, UV, wave
-height and GloFAS river discharge from one provider. Pollen is CAMS Europe
-only. Kind `measure`.
+### Open-Meteo (air quality, pollen, marine) — done
+`air-quality-api.open-meteo.com/v1/air-quality` and `marine-api…/v1/marine`,
+keyless, CC BY 4.0, non-commercial. Both take a comma list of points in one
+request (156 answered in 0.27 s) and answer for the model cell containing
+each, reporting the cell's own centre — the air model is 0.1°, the wave
+model 1/12°. So a "gridded" layer here is a lattice of points over each
+`[[aoi]]`, sized to at most 80 points per area (`openmeteo::lattice`: home
+at 0.25°, British Isles at 1.5°), each a `measure` with
+`Quality::Modeled`, dated by the model hour so repeat polls write nothing.
+Air quality hourly, marine three-hourly; the free tier is 10,000 calls a
+day counted per point and scaled past ten variables, and this comes to
+about 6,700. Two findings from the whole-lattice check: pollen fields are
+`null` outside Europe (written only when present), and the wave model
+answers a coastal *land* point with the nearest sea cell up to 0.2° away,
+so two lattice points can come back as one cell — deduped by cell in
+`decode`. Deep inland it answers `null` for everything; dropped. The home
+area has two sea cells (the Thames estuary and the Wash); the British Isles
+area 65. `flood-api…/v1/flood` (GloFAS river discharge) is still unbuilt:
+it needs river points to sample, which a lattice does not give.
 
 ### wspr.live (HF propagation)
 `https://db1.wspr.live/?query=…` — ClickHouse over HTTP, keyless. 30,263 spots
@@ -303,17 +321,47 @@ Still unbuilt from Elexon: `bmrs/api/v1/datasets/FUELINST` for the 5-minute
 GB fuel mix (a single national scalar, no geometry) and per-BM-unit output
 (B1610), which returned an empty `data` array.
 
+### data.police.uk street-level crime — done
+`api/crimes-street/all-crime?poly=lat,lng:…&date=YYYY-MM`, OGL v3, keyless,
+15 requests/s. `api/crimes-street-dates` lists the months; the newest was
+two months back (2026-07 in September). The API refuses with a bare **503**
+when a polygon holds over 10,000 records, and a 0.05° × 0.05° box in
+Islington holds 8,231 in a month and takes 10.6 s to answer, so the driver
+crawls half-degree tiles aligned to the grid (the home area's tiles are the
+British Isles area's tiles, and a tile is claimed once per month per cycle)
+and quarters any tile the API refuses, down to 0.02°. Uses the patient
+client. Kind `event`; **the month-only date is stamped at poll time** with
+`month` carried, because stamping at the first of the month would put every
+crime on the DVR at midnight on a day it did not happen, and with the seven
+day event horizon it would never be live. Cadence three days so the layer
+stays inside that horizon. `Quality::Delayed` for the two-month lag. The
+card says the month and that the point is snapped to an anonymised
+location; 1,267 of 8,231 records (all the anti-social behaviour) have no
+`persistent_id` and no outcome, so the numeric `id` is the key. Scotland is
+not in the dataset; those tiles answer `[]` at once. Live test crawls
+central London and asserts on >10,000 records, which only a working split
+can produce.
+
+### FDSN Raspberry Shake — done
+`data.raspberryshake.org/fdsnws/station/1/query?network=AM&level=channel&format=text&endafter=<now>`:
+one 2 MB pipe-separated response, 15,399 channel rows for 6,186 stations
+with an open epoch (28,108 station epochs without the `endafter` filter;
+6,186 open). No availability service on this host (404), so "active" means
+an open epoch, not data flowing now. The channel set is the only thing that
+tells one product from another — every SiteName is "Raspberry Shake Citizen
+Science Station" — and `raspberryshake::model` reads it: EHZ alone is a 1D,
+EH[ZNE] a 3D, EHZ + EN? a 4D, HDF a Boom, EHZ + HDF a Shake & Boom, SHZ the
+original 50 Hz unit. Live count: 2,067 1D, 1,636 3D, 1,784 4D, 540 Shake &
+Boom, 140 Boom; 364 in the British Isles. 17 stations at Null Island are
+dropped. Kind `station`, poll time as observation time, six-hourly.
+
 ### Others, verified keyless
-- **data.police.uk** — street-level crime, OGL v3. Monthly, ~2 month lag,
-  locations snapped to anonymised points; the UI needs to say both or it reads
-  as precise. Kind `event`.
 - **TfL Unified API** — keyless line status and bus arrivals with vehicle
   registrations; road disruptions are built (below). BODS carries TfL's bus
   positions already, so the arrivals route is moot.
-- **FDSN station metadata** — Raspberry Shake (1,566 UK station-epochs) and
-  EarthScope. `service.iris.edu` 307-redirects to `service.earthscope.org`;
-  follow redirects or you silently get nothing. ORFEUS returns 204/404 for the
-  UK.
+- **FDSN station metadata** — Raspberry Shake is built (above). EarthScope:
+  `service.iris.edu` 307-redirects to `service.earthscope.org`; follow
+  redirects or you silently get nothing. ORFEUS returns 204/404 for the UK.
 - **AERONET** — 1,674 aerosol sites, but a 2026 query for one site returned a
   45-byte banner and no rows. Probe per site before assuming currency.
 - **NASA JPL SSD/CNEOS** — fireballs have lat/lon/altitude; close approaches
@@ -378,8 +426,11 @@ Easiest first, roughly most reusable first:
 10. ~~TfL road disruptions~~ — done.
 11. ~~Carbon intensity on DNO boundaries~~ — done.
 12. ~~EMODnet platforms and wind farms~~ — done, and the feature path with them.
-13. Next candidates from the keyless list: Open-Meteo, FDSN Raspberry Shake,
-    data.police.uk (its month-only dates need a decision on how to stamp them).
+13. ~~Open-Meteo, FDSN Raspberry Shake, data.police.uk~~ — done; the
+    month-only dates are stamped at poll time with the month carried.
+14. Next candidates from the keyless list: wspr.live (needs server-side
+    aggregation), Open-Meteo flood (needs river points), NASA CNEOS
+    fireballs, OurAirports, AuroraWatch UK, FSA food hygiene.
 
 ## Process notes
 

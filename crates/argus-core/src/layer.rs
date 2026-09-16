@@ -170,6 +170,36 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#f5a623".into();
         s.min_zoom = 8;
     }),
+    ("air-quality", |s| {
+        // A lattice of a few dozen points per area, each a model cell.
+        // From z4, the scale at which a lattice across a country reads as
+        // a field; a haze grey-violet, distinct from every measured layer.
+        s.color = "#b39ddb".into();
+        s.min_zoom = 4;
+    }),
+    ("sea-state", |s| {
+        // The same lattice over the sea. Sea-foam, paler than the buoys'
+        // teal: a model of the water, not an instrument in it.
+        s.color = "#80cbc4".into();
+        s.min_zoom = 4;
+    }),
+    ("seismographs", |s| {
+        // Six thousand worldwide, clustered where people are; from z3 so
+        // the question "where can the ground be heard" is asked of a
+        // continent. The earthquakes' red, dimmed: the same subject, at
+        // rest.
+        s.color = "#c98a8a".into();
+        s.min_zoom = 3;
+    }),
+    ("street-crime", |s| {
+        // Half a million points a month across England and Wales, snapped
+        // to streets. Points, and not below z11: below that a city is a
+        // solid blob and the tile is megabytes. A muted red-brown, so it
+        // reads as a record rather than an alarm.
+        s.geometry = GeometryClass::Point;
+        s.color = "#b5651d".into();
+        s.min_zoom = 11;
+    }),
     ("ground-stations", |s| {
         // Four and a half thousand worldwide, most of them dark, so from
         // z3 — the question is where the network can hear from, asked of a

@@ -126,6 +126,18 @@ enabled = true    # EMODnet offshore wind farm outlines, daily
 [sources.metars]
 enabled = true    # Aerodrome METARs and TAFs, worldwide, from the AWC bulk cache
 
+[sources.air-quality]
+enabled = true    # Open-Meteo/CAMS air quality and pollen, a lattice over each [[aoi]], hourly
+
+[sources.sea-state]
+enabled = true    # Open-Meteo marine waves and sea temperature, same lattice, three-hourly
+
+[sources.seismographs]
+enabled = true    # Raspberry Shake citizen seismographs, worldwide, six-hourly
+
+[sources.street-crime]
+enabled = true    # data.police.uk street-level crime, a month at a time per [[aoi]], every three days
+
 # Keyed sources, off until a credential is supplied.
 [sources.buses]
 enabled = true

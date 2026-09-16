@@ -599,6 +599,37 @@ fn build_sources(
         ));
     }
 
+    // Open-Meteo: model grids sampled on a lattice over each area. Air
+    // quality and pollen hourly, sea state every three hours; both are
+    // model output and say so.
+    if enabled("air-quality") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::OpenMeteo::air_quality(
+            http.clone(),
+        )));
+    }
+    if enabled("sea-state") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::OpenMeteo::sea_state(
+            http.clone(),
+        )));
+    }
+
+    // Raspberry Shake: the citizen seismograph network, from its FDSN
+    // station service. Six-hourly; stations do not move.
+    if enabled("seismographs") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::RaspberryShake::new(
+            http.clone(),
+        )));
+    }
+
+    // data.police.uk: a month of street-level crime, crawled tile by tile
+    // over each area every three days. The patient client: a tile just
+    // under the API's ten-thousand-record refusal takes over ten seconds.
+    if enabled("street-crime") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::StreetCrime::new(
+            patient_http.clone(),
+        )));
+    }
+
     // TfL: disruptions on London's red routes, dated by their last update
     // so a month of roadworks stays on the map while TfL keeps touching it.
     if enabled("road-disruptions") {

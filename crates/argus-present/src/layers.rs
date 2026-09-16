@@ -941,6 +941,235 @@ pub fn wind_farm<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: 
     card
 }
 
+
+// --- Open-Meteo lattices ----------------------------------------------------
+
+/// The European Air Quality Index bands, with what each means for a person.
+fn aqi_words(aqi: f64) -> (&'static str, &'static str) {
+    match aqi as i64 {
+        i64::MIN..=20 => ("good", "air quality is satisfactory"),
+        21..=40 => ("fair", "acceptable; a few sensitive people may notice"),
+        41..=60 => ("moderate", "sensitive groups may feel effects"),
+        61..=80 => ("poor", "health effects possible for everyone"),
+        81..=100 => ("very poor", "health effects likely; reduce exertion outdoors"),
+        _ => ("extremely poor", "avoid outdoor exertion"),
+    }
+}
+
+fn pollen_words(grains: f64) -> &'static str {
+    match grains as i64 {
+        0 => "none",
+        1..=19 => "low",
+        20..=49 => "moderate",
+        50..=149 => "high",
+        _ => "very high",
+    }
+}
+
+pub fn air_quality<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "Air quality, modelled (CAMS via Open-Meteo)");
+    let mut rows = Vec::new();
+    if let Some(aqi) = t.f64("european_aqi") {
+        let (band, meaning) = aqi_words(aqi);
+        card.title = format!("Air quality {band} — index {}", num(aqi, 0));
+        card.summary = Some(format!(
+            "European air quality index {} ({band}): {meaning}. A model value for a 10 km cell, not a sensor reading.",
+            num(aqi, 0)
+        ));
+        rows.push(row_note("Index", format!("{} — {band}", num(aqi, 0)), "European AQI, 0–20 good to over 100 extremely poor"));
+    } else {
+        card.title = "Air quality".into();
+    }
+    let ug = |v: f64| format!("{} µg/m³", num(v, 1));
+    push(&mut rows, "PM2.5", t.f64("pm2_5_ugm3").map(ug));
+    push(&mut rows, "PM10", t.f64("pm10_ugm3").map(ug));
+    push(&mut rows, "Nitrogen dioxide", t.f64("no2_ugm3").map(ug));
+    push(&mut rows, "Ozone", t.f64("ozone_ugm3").map(ug));
+    push(&mut rows, "Sulphur dioxide", t.f64("so2_ugm3").map(ug));
+    push(&mut rows, "Carbon monoxide", t.f64("co_ugm3").map(ug));
+    push(&mut rows, "Ammonia", t.f64("nh3_ugm3").map(ug));
+    push(&mut rows, "Dust", t.f64("dust_ugm3").map(ug));
+    push(&mut rows, "UV index", t.f64("uv_index").map(|v| num(v, 1)));
+    card.sections.extend(section(Some("Pollutants"), rows));
+
+    let mut rows = Vec::new();
+    for (key, name) in [
+        ("grass_pollen_grains_m3", "Grass"),
+        ("birch_pollen_grains_m3", "Birch"),
+        ("alder_pollen_grains_m3", "Alder"),
+        ("mugwort_pollen_grains_m3", "Mugwort"),
+        ("olive_pollen_grains_m3", "Olive"),
+        ("ragweed_pollen_grains_m3", "Ragweed"),
+    ] {
+        if let Some(g) = t.f64(key) {
+            rows.push(row(name, format!("{} — {} grains/m³", pollen_words(g), num(g, 0))));
+        }
+    }
+    card.sections.extend(section(Some("Pollen"), rows));
+
+    let mut rows = Vec::new();
+    push(&mut rows, "Model hour", t.str("model_time").and_then(when));
+    push(&mut rows, "Sampled every", t.f64("lattice_spacing_deg").map(|d| format!("{}° — one point of a lattice over the area", num(d, 2))));
+    push(&mut rows, "Cell elevation", t.f64("model_elevation_m").map(metres));
+    t.skip("aqi_scale");
+    card.sections.extend(section(Some("Model"), rows));
+    card
+}
+
+pub fn sea_state<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "Sea state, modelled (Open-Meteo marine)");
+    let mut rows = Vec::new();
+    let mut summary = Vec::new();
+    match (t.f64("wave_height_m"), t.f64("wave_period_s"), t.f64("wave_dir_deg")) {
+        (Some(h), period, dir) => {
+            let mut text = format!("{} m", num(h, 1));
+            if let Some(p) = period {
+                text.push_str(&format!(" every {} s", num(p, 0)));
+            }
+            if let Some(d) = dir {
+                text.push_str(&format!(" from {}", format::compass(d)));
+            }
+            card.title = format!("Waves {} m", num(h, 1));
+            summary.push(format!("waves {text}"));
+            rows.push(row("Waves", text));
+        }
+        _ => card.title = "Sea state".into(),
+    }
+    push(&mut rows, "Wind waves", t.f64("wind_wave_height_m").map(|h| format!("{} m", num(h, 1))));
+    push(&mut rows, "Swell", t.f64("swell_wave_height_m").map(|h| format!("{} m", num(h, 1))));
+    if let Some(v) = t.f64("sea_temp_c") {
+        summary.push(format!("sea {}", celsius(v)));
+        rows.push(row("Sea temperature", celsius(v)));
+    }
+    push(&mut rows, "Current", t.f64("current_speed_kmh").map(|v| format!("{} km/h ({} kt)", num(v, 1), num(v / 1.852, 1))));
+    card.summary = (!summary.is_empty()).then(|| {
+        let mut s = summary.join(", ");
+        if let Some(f) = s.get(..1) {
+            let up = f.to_uppercase();
+            s.replace_range(..1, &up);
+        }
+        s + ". A wave model's value for its cell, not a buoy."
+    });
+    card.sections.extend(section(Some("Conditions"), rows));
+    let mut rows = Vec::new();
+    push(&mut rows, "Model time", t.str("model_time").and_then(when));
+    push(&mut rows, "Sampled every", t.f64("lattice_spacing_deg").map(|d| format!("{}° — one point of a lattice over the area", num(d, 2))));
+    card.sections.extend(section(Some("Model"), rows));
+    card
+}
+
+// --- Raspberry Shake ---------------------------------------------------------
+
+pub fn seismograph<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "Citizen seismograph (Raspberry Shake)");
+    let station = t.str("station").unwrap_or(subject.key).to_string();
+    let model = t.str("model").unwrap_or("Raspberry Shake").to_string();
+    card.title = format!("{model} {station}");
+    let senses = t.strings("senses");
+    card.summary = Some(match senses.len() {
+        0 => format!("A {model} in the citizen seismic network."),
+        _ => format!("A {model} recording {}.", senses.join(" and ")),
+    });
+    let mut rows = vec![row("Station", format!("AM.{station}"))];
+    rows.push(row("Model", model));
+    let channels = t.strings("channels");
+    if !channels.is_empty() {
+        rows.push(row_note(
+            "Channels",
+            channels.join(", "),
+            "EH: geophone velocity, EN: accelerometer, HDF: infrasound; Z vertical, N north, E east",
+        ));
+    }
+    push(&mut rows, "Sample rate", t.f64("sample_rate_hz").map(|r| format!("{} Hz", num(r, 0))));
+    push(&mut rows, "Elevation", t.f64("elevation_m").map(metres));
+    push(&mut rows, "Recording since", t.str("installed").and_then(when));
+    t.skip("network");
+    card.sections.extend(section(None, rows));
+    if let Some(url) = t.str("url") {
+        card.links.push(Link { label: "Live trace on StationView".into(), url: url.to_string() });
+    }
+    card
+}
+
+// --- data.police.uk ---------------------------------------------------------
+
+fn crime_words(slug: &str) -> &str {
+    match slug {
+        "anti-social-behaviour" => "Anti-social behaviour",
+        "bicycle-theft" => "Bicycle theft",
+        "burglary" => "Burglary",
+        "criminal-damage-arson" => "Criminal damage and arson",
+        "drugs" => "Drugs",
+        "other-theft" => "Other theft",
+        "possession-of-weapons" => "Possession of weapons",
+        "public-order" => "Public order",
+        "robbery" => "Robbery",
+        "shoplifting" => "Shoplifting",
+        "theft-from-the-person" => "Theft from the person",
+        "vehicle-crime" => "Vehicle crime",
+        "violent-crime" => "Violence and sexual offences",
+        "other-crime" => "Other crime",
+        other => other,
+    }
+}
+
+/// `2026-07` → `July 2026`.
+fn month_words(ym: &str) -> String {
+    let months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    match ym.split_once('-') {
+        Some((y, m)) => match m.parse::<usize>() {
+            Ok(m) if (1..=12).contains(&m) => format!("{} {y}", months[m - 1]),
+            _ => ym.to_string(),
+        },
+        None => ym.to_string(),
+    }
+}
+
+pub fn street_crime<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "Recorded crime (data.police.uk)");
+    let category = t.str("category").map(crime_words).unwrap_or("Recorded crime").to_string();
+    let street = t.str("street").map(|s| s.strip_prefix("On or near ").unwrap_or(s).to_string());
+    let month = t.str("month").map(month_words);
+    card.title = match &street {
+        Some(s) => format!("{category}, {s}"),
+        None => category.clone(),
+    };
+    let reported_by = match t.str("location_type") {
+        Some("BTP") => " to the British Transport Police",
+        _ => "",
+    };
+    card.summary = Some(match &month {
+        Some(m) => format!(
+            "{category}, reported{reported_by} in {m}. The police publish the month only, and the point is snapped to a nearby street or place, not the address."
+        ),
+        None => format!("{category}, snapped to a nearby street or place, not the address."),
+    });
+    let mut rows = vec![row("Category", category)];
+    push(&mut rows, "Month", month);
+    if let Some(s) = street {
+        rows.push(row_note("Near", s, "the anonymised point the police snapped this to"));
+    }
+    push(&mut rows, "Place type", t.str("location_subtype").map(str::to_string));
+    match (t.str("outcome"), t.str("outcome_month")) {
+        (Some(o), Some(m)) => rows.push(row("Outcome", format!("{o} ({})", month_words(m)))),
+        (Some(o), None) => rows.push(row("Outcome", o)),
+        (None, _) => rows.push(row_note("Outcome", "none recorded", "anti-social behaviour carries no outcome; other categories may not have one yet")),
+    }
+    push(&mut rows, "Context", t.str("context").map(str::to_string));
+    push(&mut rows, "Reference", t.str("persistent_id").map(str::to_string));
+    t.skip("street_id");
+    t.skip("snapped");
+    if t.str("location_type") == Some("BTP") {
+        rows.push(row("Reported to", "British Transport Police"));
+    }
+    card.sections.extend(section(None, rows));
+    card
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{card, Subject};
@@ -1027,5 +1256,46 @@ mod tests {
         let also = c.sections.iter().find(|s| s.heading.as_deref() == Some("Also")).expect("an Also section");
         assert_eq!(also.rows[0].label, "Brand new field");
         assert_eq!(also.rows[0].value, "3 kt");
+    }
+
+    #[test]
+    fn an_air_cell_reads_as_a_band_and_says_it_is_a_model() {
+        let c = present("air-quality", serde_json::json!({"european_aqi": 19.0, "pm10_ugm3": 7.1, "pm2_5_ugm3": 3.2, "no2_ugm3": 7.1, "ozone_ugm3": 58.0, "so2_ugm3": 0.7, "co_ugm3": 199.0, "nh3_ugm3": 2.3, "dust_ugm3": 0.0, "uv_index": 1.15, "grass_pollen_grains_m3": 0.1, "birch_pollen_grains_m3": 0.0, "alder_pollen_grains_m3": 0.0, "mugwort_pollen_grains_m3": 0.0, "olive_pollen_grains_m3": 0.0, "ragweed_pollen_grains_m3": 0.0, "model_time": "2026-09-16T15:00:00Z", "lattice_spacing_deg": 0.25, "model_elevation_m": 12.0}), "AQI 19 (good)");
+        assert_eq!(c.title, "Air quality good — index 19");
+        assert!(c.summary.as_deref().unwrap().contains("not a sensor reading"));
+        assert_eq!(value(&c, "PM2.5"), "3.2 µg/m³");
+        assert_eq!(value(&c, "Grass"), "none — 0 grains/m³");
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
+    }
+
+    #[test]
+    fn a_sea_cell_reads_like_a_buoy_but_says_it_is_not_one() {
+        let c = present("sea-state", serde_json::json!({"wave_height_m": 0.52, "wave_dir_deg": 293.0, "wave_period_s": 3.05, "wind_wave_height_m": 0.4, "swell_wave_height_m": 0.3, "sea_temp_c": 19.5, "current_speed_kmh": 1.2, "model_time": "2026-09-16T15:45:00Z", "lattice_spacing_deg": 0.2}), "Waves 0.5 m");
+        assert_eq!(c.title, "Waves 0.5 m");
+        assert_eq!(c.summary.as_deref(), Some("Waves 0.5 m every 3 s from WNW, sea 19.5 °C. A wave model's value for its cell, not a buoy."));
+        assert_eq!(value(&c, "Current"), "1.2 km/h (0.6 kt)");
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
+    }
+
+    #[test]
+    fn a_shake_names_its_model_and_what_it_hears() {
+        let c = present("seismographs", serde_json::json!({"station": "R0A1B", "network": "AM", "model": "Raspberry Shake 4D", "senses": ["ground velocity", "ground acceleration"], "channels": ["EHZ", "ENE", "ENN", "ENZ"], "sample_rate_hz": 100.0, "elevation_m": 80.0, "installed": "2019-05-02T10:00:00Z", "url": "https://stationview.raspberryshake.org/#?net=AM&sta=R0A1B"}), "Raspberry Shake 4D R0A1B");
+        assert_eq!(c.title, "Raspberry Shake 4D R0A1B");
+        assert_eq!(c.summary.as_deref(), Some("A Raspberry Shake 4D recording ground velocity and ground acceleration."));
+        assert_eq!(value(&c, "Recording since"), "2 May 2019 10:00 UTC");
+        assert!(c.links.iter().any(|l| l.label.contains("StationView")));
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
+    }
+
+    #[test]
+    fn a_crime_says_its_month_and_that_its_point_is_snapped() {
+        let c = present("street-crime", serde_json::json!({"category": "bicycle-theft", "month": "2026-07", "street": "On or near Kings Cross", "street_id": 1682390, "location_type": "BTP", "location_subtype": "Station", "outcome": "Investigation complete; no suspect identified", "outcome_month": "2026-08", "persistent_id": "abc123", "snapped": true}), "Bicycle theft, Kings Cross");
+        assert_eq!(c.title, "Bicycle theft, Kings Cross");
+        assert_eq!(c.summary.as_deref(), Some("Bicycle theft, reported to the British Transport Police in July 2026. The police publish the month only, and the point is snapped to a nearby street or place, not the address."));
+        assert_eq!(value(&c, "Outcome"), "Investigation complete; no suspect identified (August 2026)");
+        assert_eq!(value(&c, "Near"), "Kings Cross");
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
+        let asb = present("street-crime", serde_json::json!({"category": "anti-social-behaviour", "month": "2026-07", "street": "On or near Earlstoke Street", "street_id": 1, "location_type": "Force", "snapped": true}), "x");
+        assert_eq!(value(&asb, "Outcome"), "none recorded");
     }
 }
