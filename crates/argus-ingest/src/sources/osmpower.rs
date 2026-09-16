@@ -261,6 +261,12 @@ impl Source for PowerGrid {
         let Some(bbox) = ctx.bbox else {
             return Err(SourceError::Decode("the power grid is a bounded source and was polled without an area".into()));
         };
+        // The status page is the cheapest question Overpass answers. If it
+        // cannot be reached at all the instance is down or has refused this
+        // address, and fifty tiles will not do better than one page.
+        if let Err(err @ SourceError::Transport(_)) = self.http.get_bytes(STATUS_URL).await {
+            return Err(err);
+        }
         let now = Utc::now();
         let mut out = Vec::new();
         let mut failed = 0;
