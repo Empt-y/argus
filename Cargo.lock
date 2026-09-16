@@ -103,6 +103,7 @@ dependencies = [
  "argus-alert",
  "argus-analyze",
  "argus-core",
+ "argus-present",
  "argus-store",
  "argus-tiles",
  "axum",
@@ -165,6 +166,16 @@ dependencies = [
  "tokio-tungstenite 0.24.0",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "argus-present"
+version = "0.1.0"
+dependencies = [
+ "argus-core",
+ "chrono",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

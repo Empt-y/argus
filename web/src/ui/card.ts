@@ -12,6 +12,13 @@
  * here comes from `tracks_1m` and stops where the record stops; nothing is
  * extrapolated forward, because a dead-reckoned continuation drawn in the same
  * style as a recorded one is a lie about what was observed.
+ *
+ * What the entity *is* — the decoded METAR, the bus's destination, the
+ * squawk's meaning — comes from the server as a `card` on the detail
+ * response, built by the layer's presenter. This file lays that out and does
+ * not interpret attributes itself, so a new layer reads properly here the day
+ * its driver lands. The raw attributes stay behind a fold for anyone who
+ * wants to see what the feed actually said.
  */
 
 import {
@@ -24,24 +31,10 @@ import {
 import { api } from "../net/client.ts";
 import { resolveHeight } from "../geo/datum.ts";
 import { reckonedFor } from "../geo/reckon.ts";
-import type { Entity, Quality, TrackPoint } from "../net/types.ts";
+import type { Card, Entity, Quality, TrackPoint } from "../net/types.ts";
 
 /** How much history to draw behind a selected contact. */
 const TRACK_HOURS = 2;
-
-/** Attributes worth promoting out of the raw `attrs` blob, in this order. */
-const PROMOTED: [key: string, label: string][] = [
-  ["registration", "reg"],
-  ["type_code", "type"],
-  ["callsign", "callsign"],
-  ["squawk", "squawk"],
-  ["category", "category"],
-  ["magnitude", "magnitude"],
-  ["depth_km", "depth"],
-  ["severity", "severity"],
-  ["event", "event"],
-  ["norad_id", "norad"],
-];
 
 export class EntityCard {
   readonly #root: HTMLElement;
@@ -154,12 +147,6 @@ export class EntityCard {
         .replace(/_/g, " ");
       rows.push(["modelled", `${kind} ~${Math.round(radius / 1000)} km radius (estimated)`]);
     }
-    for (const [key, label] of PROMOTED) {
-      const value = entity.attrs?.[key];
-      if (value !== undefined && value !== null && value !== "") {
-        rows.push([label, String(value)]);
-      }
-    }
     if (track) {
       rows.push([
         "track",
@@ -169,14 +156,17 @@ export class EntityCard {
       ]);
     }
 
+    const card = entity.card;
+    const attrKeys = Object.keys(entity.attrs ?? {});
     this.#root.innerHTML = `
       <button class="card-close" title="close">×</button>
-      <h2>${escape(entity.label ?? entity.entity_key)}</h2>
+      <h2>${escape(card?.title ?? entity.label ?? entity.entity_key)}</h2>
       <div class="card-head">
         <span class="chip ${qualityClass(entity.quality)}">${entity.quality}</span>
-        <span>${escape(entity.layer_id)}</span>
+        <span>${escape(card?.subtitle ?? entity.layer_id)}</span>
         <span class="count">via ${escape(entity.source_id)} · ${formatAge(ageS)}</span>
       </div>
+      ${card?.summary ? `<p class="card-summary">${escape(card.summary)}</p>` : ""}
       <dl class="card-rows">
         ${rows
           .map(
@@ -185,6 +175,20 @@ export class EntityCard {
           )
           .join("")}
       </dl>
+      ${card ? renderSections(card) : ""}
+      ${card?.links?.length ? renderLinks(card) : ""}
+      ${
+        attrKeys.length
+          ? `<details class="card-raw"><summary>raw attributes (${attrKeys.length})</summary>
+             <dl class="card-rows">${attrKeys
+               .sort()
+               .map(
+                 (k) =>
+                   `<dt>${escape(k)}</dt><dd>${escape(rawValue(entity.attrs[k]))}</dd>`,
+               )
+               .join("")}</dl></details>`
+          : ""
+      }
     `;
     this.#root
       .querySelector(".card-close")
@@ -228,6 +232,46 @@ export class EntityCard {
     );
     this.viewer.scene.requestRender();
   }
+}
+
+function renderSections(card: Card): string {
+  return card.sections
+    .map(
+      (section) => `
+        <section class="card-section">
+          ${section.heading ? `<h3>${escape(section.heading)}</h3>` : ""}
+          <dl class="card-rows">
+            ${section.rows
+              .map(
+                (row) =>
+                  `<dt>${escape(row.label)}</dt><dd>${escape(row.value)}${
+                    row.note ? `<span class="card-note">${escape(row.note)}</span>` : ""
+                  }</dd>`,
+              )
+              .join("")}
+          </dl>
+        </section>`,
+    )
+    .join("");
+}
+
+function renderLinks(card: Card): string {
+  // Only http(s) targets become anchors: the server builds these from feed
+  // fields, and a feed field is not a place to accept a `javascript:` URL.
+  const links = (card.links ?? []).filter((l) => /^https?:\/\//i.test(l.url));
+  if (!links.length) return "";
+  return `<p class="card-links">${links
+    .map(
+      (l) =>
+        `<a href="${escape(l.url)}" target="_blank" rel="noopener noreferrer">${escape(l.label)} ↗</a>`,
+    )
+    .join(" · ")}</p>`;
+}
+
+function rawValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
 }
 
 function qualityClass(quality: Quality): string {

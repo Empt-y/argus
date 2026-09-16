@@ -146,7 +146,19 @@ html, body {
   font-size: 12px;
 }
 .card-rows dt { color: var(--dim); }
-.card-rows dd { margin: 0; overflow-wrap: anywhere; }
+.card-rows dd { margin: 0; overflow-wrap: anywhere; white-space: pre-line; }
+.card-summary { margin: 0 0 8px; font-size: 12px; line-height: 1.4; }
+.card-section { margin-top: 8px; }
+.card-section h3 {
+  margin: 0 0 3px; font-size: 11px; font-weight: 600;
+  color: var(--dim); text-transform: uppercase; letter-spacing: 0.04em;
+}
+.card-note { display: block; color: var(--dim); font-size: 11px; }
+.card-links { margin: 8px 0 0; font-size: 12px; }
+.card-links a { color: var(--text); }
+.card-raw { margin-top: 8px; font-size: 11px; }
+.card-raw summary { color: var(--dim); cursor: pointer; }
+.card-raw .card-rows { margin-top: 4px; font-family: ui-monospace, monospace; font-size: 11px; }
 
 .sensors { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
 .sensor {

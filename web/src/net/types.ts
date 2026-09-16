@@ -84,6 +84,39 @@ export interface Entity {
   quality: Quality;
   label: string | null;
   attrs: Record<string, unknown>;
+  /** The entity as a person reads it. Only the detail endpoint builds one;
+   *  a row off the stream or a tile has none. */
+  card?: Card;
+}
+
+/**
+ * What the server says an entity looks like to a person: `attrs` decoded
+ * into words and units by the layer's presenter, so a METAR reads as a
+ * sentence here without this client knowing what a METAR is.
+ */
+export interface Card {
+  title: string;
+  subtitle?: string;
+  summary?: string;
+  sections: CardSection[];
+  links?: CardLink[];
+}
+
+export interface CardSection {
+  heading?: string;
+  rows: CardRow[];
+}
+
+export interface CardRow {
+  label: string;
+  value: string;
+  /** A quieter second line: the raw code behind a decoded word, a caveat. */
+  note?: string;
+}
+
+export interface CardLink {
+  label: string;
+  url: string;
 }
 
 export type GeoJsonGeometry =

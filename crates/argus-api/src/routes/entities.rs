@@ -54,17 +54,38 @@ pub async fn list(
     }))
 }
 
+/// One entity, as stored, plus the same thing as a person would read it.
+///
+/// The row is flattened so that a client written against the bare row
+/// still parses; `card` is added alongside. The card is built here rather
+/// than in either client because a new layer should read properly on the
+/// phone and in the browser the day its driver lands, without both of them
+/// learning what a METAR is.
+#[derive(Serialize)]
+pub struct DetailResponse {
+    #[serde(flatten)]
+    pub entity: argus_store::EntityRow,
+    pub card: argus_present::Card,
+}
+
 pub async fn detail(
     State(state): State<ApiState>,
     Path((kind, key)): Path<(String, String)>,
-) -> ApiResult<Json<argus_store::EntityRow>> {
+) -> ApiResult<Json<DetailResponse>> {
     let id = entity_id(&kind, &key)?;
-    state
+    let entity = state
         .store
         .entity(&id)
         .await?
-        .map(Json)
-        .ok_or_else(|| ApiError::NotFound(format!("no {kind} with key '{key}'")))
+        .ok_or_else(|| ApiError::NotFound(format!("no {kind} with key '{key}'")))?;
+    let card = argus_present::card(argus_present::Subject {
+        layer_id: &entity.layer_id,
+        kind: &entity.entity_kind,
+        key: &entity.entity_key,
+        label: entity.label.as_deref(),
+        attrs: &entity.attrs,
+    });
+    Ok(Json(DetailResponse { entity, card }))
 }
 
 #[derive(Debug, Deserialize)]

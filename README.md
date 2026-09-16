@@ -57,6 +57,8 @@ See the roadmap at the bottom.
         ▼                   ▼                    ▼                  ▼
    argus-analyze       argus-alert          argus-api          argus-tiles
    derived layers      geofences            REST + WebSocket   MVT + terrain
+                                            + argus-present
+                                              cards: attrs → words
         └───────────────────┴────────────────────┴──────────────────┘
                             │   LAN / Tailscale
                 ┌───────────┴────────────┐
@@ -188,6 +190,19 @@ before writing the decoder (field cardinality, timestamp distribution, missing
 value conventions), write a live test that asserts on record counts rather than
 status codes, and read `sources.last_error` in the database after deploying,
 because a live test with its own HTTP client is not testing the daemon's.
+
+A driver stores what its feed said, in the feed's own terms (`wx: "-RA BR"`,
+`squawk: "7700"`). What a person sees when they tap the entity comes from
+`crates/argus-present`, which turns those attributes into a card — a title, a
+sentence, labelled rows in words and units — on the server, so both clients
+show it the day the driver lands. A layer without a presenter gets the
+generic one (keys prettified, units recognised), and a presenter that misses
+a key shows it under "Also" rather than losing it. To check a presenter
+against a whole layer rather than the record it was written from:
+
+```
+psql -At -c "select row_to_json(e) from entities e" | cargo run -p argus-present --example cards -- --summary
+```
 
 [docs/DATA-SOURCES.md](docs/DATA-SOURCES.md) is the research log: every source
 that has been checked, what it actually returns, and what went wrong.

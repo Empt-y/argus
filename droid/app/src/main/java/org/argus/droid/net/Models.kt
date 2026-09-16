@@ -96,7 +96,41 @@ data class EntityRow(
     val quality: String = "unknown",
     val label: String? = null,
     val attrs: JsonObject = JsonObject(emptyMap()),
+    /** The entity as a person reads it; only the detail endpoint builds one. */
+    val card: Card? = null,
 )
+
+/**
+ * What the server says an entity looks like to a person: `attrs` decoded into
+ * words and units by the layer's presenter. The sheet lays this out and does
+ * not interpret attributes itself, so a new layer reads properly on the phone
+ * the day its driver lands, without an app release.
+ */
+@Serializable
+data class Card(
+    val title: String,
+    val subtitle: String? = null,
+    val summary: String? = null,
+    val sections: List<CardSection> = emptyList(),
+    val links: List<CardLink> = emptyList(),
+)
+
+@Serializable
+data class CardSection(
+    val heading: String? = null,
+    val rows: List<CardRow> = emptyList(),
+)
+
+@Serializable
+data class CardRow(
+    val label: String,
+    val value: String,
+    /** A quieter second line: the raw code behind a decoded word, a caveat. */
+    val note: String? = null,
+)
+
+@Serializable
+data class CardLink(val label: String, val url: String)
 
 @Serializable
 data class TrackPoint(

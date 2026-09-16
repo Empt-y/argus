@@ -5,6 +5,7 @@ members = [
     "crates/argus-store",
     "crates/argus-ingest",
     "crates/argus-tiles",
+    "crates/argus-present",
     "crates/argus-analyze",
     "crates/argus-alert",
     "crates/argus-api",
@@ -24,6 +25,7 @@ argus-core = { path = "crates/argus-core" }
 argus-store = { path = "crates/argus-store" }
 argus-ingest = { path = "crates/argus-ingest" }
 argus-tiles = { path = "crates/argus-tiles" }
+argus-present = { path = "crates/argus-present" }
 argus-analyze = { path = "crates/argus-analyze" }
 argus-alert = { path = "crates/argus-alert" }
 argus-api = { path = "crates/argus-api" }

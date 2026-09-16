@@ -815,6 +815,11 @@ async fn an_entity_detail_and_its_track_resolve_by_natural_key() {
     assert_eq!(body["entity_key"], "a1b2c3");
     assert_eq!(body["quality"], "live");
     assert!(body["attrs"].is_object());
+    // The presented card rides alongside the raw row, never instead of it:
+    // a client that only knows the row keeps working, and one that knows
+    // the card gets words rather than `wind_speed_kt 16`.
+    assert!(body["card"]["title"].is_string(), "{body:#}");
+    assert!(body["card"]["sections"].is_array(), "{body:#}");
 
     let (status, body) = get(&state, "/v1/entities/aircraft/a1b2c3/track", LOOPBACK).await;
     assert_eq!(status, StatusCode::OK);

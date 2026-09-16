@@ -30,12 +30,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.serialization.json.JsonPrimitive
 import org.argus.droid.Selection
 import org.argus.droid.net.Alert
+import org.argus.droid.net.CardRow
 import org.argus.droid.net.GeofenceView
 import org.argus.droid.net.SourceRow
 import java.time.Instant
@@ -69,21 +71,27 @@ fun EntitySheet(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState()),
         ) {
+            val card = detail?.card
             Text(
-                text = tapped.label ?: tapped.key,
+                text = card?.title ?: tapped.label ?: tapped.key,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
                 text = buildString {
+                    card?.subtitle?.let { append(it); append(" · ") }
                     append(tapped.kind)
                     append(" · ")
                     append(tapped.key)
-                    detail?.layerId?.let { append(" · $it") }
+                    if (card?.subtitle == null) detail?.layerId?.let { append(" · $it") }
                 },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            card?.summary?.let {
+                Spacer(Modifier.size(8.dp))
+                Text(it, style = MaterialTheme.typography.bodyMedium)
+            }
 
             Spacer(Modifier.size(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -155,10 +163,48 @@ fun EntitySheet(
                 )
             }
 
-            detail?.attrs?.takeIf { it.isNotEmpty() }?.let { attrs ->
+            card?.sections?.forEach { section ->
                 Spacer(Modifier.size(10.dp))
-                attrs.entries.sortedBy { it.key }.forEach { (name, value) ->
-                    Field(name, (value as? JsonPrimitive)?.content ?: value.toString())
+                section.heading?.let {
+                    Text(
+                        it.uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.size(2.dp))
+                }
+                section.rows.forEach { CardField(it) }
+            }
+
+            card?.links?.filter { it.url.startsWith("http://") || it.url.startsWith("https://") }
+                ?.takeIf { it.isNotEmpty() }?.let { links ->
+                    val uriHandler = LocalUriHandler.current
+                    Spacer(Modifier.size(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        links.forEach { link ->
+                            TextButton(onClick = { runCatching { uriHandler.openUri(link.url) } }) {
+                                Text(link.label + " ↗", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
+                }
+
+            // What the feed actually said, behind a fold. The card above is
+            // the server's reading of it; this is the evidence.
+            detail?.attrs?.takeIf { it.isNotEmpty() }?.let { attrs ->
+                var showRaw by remember(detail.key) { mutableStateOf(card == null) }
+                Spacer(Modifier.size(10.dp))
+                Text(
+                    text = (if (showRaw) "▾ " else "▸ ") + "raw attributes (${attrs.size})",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.clickable { showRaw = !showRaw },
+                )
+                if (showRaw) {
+                    attrs.entries.sortedBy { it.key }.forEach { (name, value) ->
+                        Field(name, (value as? JsonPrimitive)?.content ?: value.toString())
+                    }
                 }
             }
 
@@ -169,6 +215,52 @@ fun EntitySheet(
 
             Spacer(Modifier.size(14.dp))
             TextButton(onClick = { onGoTo(tapped.lat, tapped.lon) }) { Text("centre on this") }
+        }
+    }
+}
+
+/**
+ * One row of a card: a label, a value in words, and the quieter note under
+ * it when the server attached one. Values are prose, so they wrap rather than
+ * sit in monospace; long ones (a NWS alert's paragraphs) stack under the
+ * label instead of squeezing beside it.
+ */
+@Composable
+private fun CardField(row: CardRow) {
+    val long = row.value.length > 40 || row.value.contains('\n')
+    if (long) {
+        Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+            Text(
+                row.label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(row.value, style = MaterialTheme.typography.bodySmall)
+            row.note?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                row.label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 12.dp),
+            )
+            Column(horizontalAlignment = Alignment.End) {
+                Text(row.value, style = MaterialTheme.typography.bodySmall)
+                row.note?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }
