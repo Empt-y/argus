@@ -657,15 +657,18 @@ impl Store {
         Ok(())
     }
 
-    /// When a source last polled successfully, across restarts, so a
-    /// weekly crawl of a shared public instance is not repeated because
-    /// the daemon was restarted twice in an afternoon.
+    /// When a source last polled cleanly, across restarts, so a weekly
+    /// crawl of a shared public instance is not repeated because the
+    /// daemon was restarted twice in an afternoon. A source whose last
+    /// poll left an error behind — an area that did not answer — is not
+    /// clean, and gets `None`, so it is retried on start.
     pub async fn source_last_success(
         &self,
         source_id: &argus_core::SourceId,
     ) -> Result<Option<DateTime<Utc>>, StoreError> {
-        let at: Option<Option<DateTime<Utc>>> =
-            sqlx::query_scalar("SELECT last_success FROM sources WHERE source_id = $1")
+        let at: Option<Option<DateTime<Utc>>> = sqlx::query_scalar(
+            "SELECT CASE WHEN last_error IS NULL THEN last_success END FROM sources WHERE source_id = $1",
+        )
                 .bind(source_id.as_str())
                 .fetch_optional(&self.pool)
                 .await?;

@@ -84,8 +84,18 @@ pub struct PowerGrid {
     descriptor: SourceDescriptor,
     http: HttpClient,
     /// Tiles read this cycle, so the home area inside the British Isles
-    /// area is not asked of Overpass twice a week.
-    done: Mutex<HashMap<String, DateTime<Utc>>>,
+    /// area is not asked of Overpass twice a week — and, until an area
+    /// comes back whole, what each tile answered, so a poll that lost
+    /// some tiles can be reported as a failure (and retried on the
+    /// scheduler's backoff rather than next week) without the tiles that
+    /// did answer being asked again.
+    done: Mutex<HashMap<String, Tile>>,
+}
+
+struct Tile {
+    at: DateTime<Utc>,
+    /// Held only while the area's poll is incomplete.
+    pending: Option<Vec<Observation>>,
 }
 
 impl PowerGrid {
@@ -114,16 +124,40 @@ impl PowerGrid {
         }
     }
 
-    /// Whether this tile is due, and mark it read if so.
-    fn claim(&self, tile: &BoundingBox, now: DateTime<Utc>) -> bool {
+    /// Whether this tile is due, and mark it read if so. A tile read in
+    /// an earlier, incomplete attempt hands back what it answered.
+    fn claim(&self, tile: &BoundingBox, now: DateTime<Utc>) -> Claim {
         let mut done = self.done.lock().expect("tile lock poisoned");
-        let key = format!("{:.1},{:.1}", tile.west, tile.south);
+        let key = tile_key(tile);
         let fresh = chrono::Duration::seconds(CADENCE_SECS as i64 - 3600);
-        if done.get(&key).is_some_and(|t| now - *t < fresh) {
-            return false;
+        if let Some(t) = done.get_mut(&key)
+            && now - t.at < fresh
+        {
+            return match t.pending.take() {
+                Some(obs) => Claim::Pending(obs),
+                None => Claim::Done,
+            };
         }
-        done.insert(key, now);
-        true
+        done.insert(key, Tile { at: now, pending: None });
+        Claim::Due
+    }
+
+    /// Keep a tile's answer until the area comes back whole.
+    fn hold(&self, tile: &BoundingBox, obs: Vec<Observation>) {
+        let mut done = self.done.lock().expect("tile lock poisoned");
+        if let Some(t) = done.get_mut(&tile_key(tile)) {
+            t.pending = Some(obs);
+        }
+    }
+
+    /// The area came back whole: nothing needs holding.
+    fn settle(&self, tiles: &[BoundingBox]) {
+        let mut done = self.done.lock().expect("tile lock poisoned");
+        for tile in tiles {
+            if let Some(t) = done.get_mut(&tile_key(tile)) {
+                t.pending = None;
+            }
+        }
     }
 
     /// Wait until Overpass says a slot is free, up to a few minutes. A
@@ -145,8 +179,18 @@ impl PowerGrid {
 
     fn release(&self, tile: &BoundingBox) {
         let mut done = self.done.lock().expect("tile lock poisoned");
-        done.remove(&format!("{:.1},{:.1}", tile.west, tile.south));
+        done.remove(&tile_key(tile));
     }
+}
+
+enum Claim {
+    Due,
+    Done,
+    Pending(Vec<Observation>),
+}
+
+fn tile_key(tile: &BoundingBox) -> String {
+    format!("{:.1},{:.1}", tile.west, tile.south)
 }
 
 /// The Overpass QL for one tile.
@@ -223,14 +267,25 @@ impl Source for PowerGrid {
         let mut kept = Kept::default();
         let tiles = tiles(&bbox, TILE_DEG);
         let mut skipped = 0;
+        let mut asked = 0;
         for tile in &tiles {
-            if !self.claim(tile, now) {
-                skipped += 1;
-                continue;
+            match self.claim(tile, now) {
+                Claim::Due => {}
+                Claim::Done => {
+                    skipped += 1;
+                    continue;
+                }
+                Claim::Pending(obs) => {
+                    // Answered in an earlier attempt of this cycle.
+                    out.extend(obs);
+                    skipped += 1;
+                    continue;
+                }
             }
-            if !out.is_empty() || failed > 0 {
+            if asked > 0 {
                 tokio::time::sleep(TILE_GAP).await;
             }
+            asked += 1;
             self.wait_for_slot().await;
             let url = reqwest::Url::parse_with_params(OVERPASS_URL, &[("data", query(tile))])
                 .map_err(|e| SourceError::Decode(e.to_string()))?;
@@ -246,6 +301,7 @@ impl Source for PowerGrid {
                 Ok(bytes) => match decode(&bytes, &self.descriptor.id, now) {
                     Ok((obs, k)) => {
                         kept.add(&k);
+                        self.hold(tile, obs.clone());
                         out.extend(obs);
                     }
                     Err(err) => {
@@ -261,10 +317,14 @@ impl Source for PowerGrid {
                 }
             }
         }
-        tracing::info!(source = %self.descriptor.id, tiles = tiles.len(), skipped, failed, ?kept, "power grid read");
-        if out.is_empty() && failed > 0 {
-            return Err(SourceError::Transport(format!("{failed} of {} tiles failed and none answered", tiles.len())));
+        tracing::info!(source = %self.descriptor.id, tiles = tiles.len(), asked, skipped, failed, ?kept, "power grid read");
+        if failed > 0 {
+            // Reported as a failure so the scheduler retries on its
+            // backoff rather than next week; the tiles that answered are
+            // held and handed back on that retry, not asked for again.
+            return Err(SourceError::Transport(format!("{failed} of {} tiles failed; the rest are held for the retry", tiles.len())));
         }
+        self.settle(&tiles);
         Ok(out)
     }
 }

@@ -218,7 +218,8 @@ async fn poll_and_store(
 ) -> (PollOutcome, Option<Duration>) {
     let descriptor = source.descriptor();
 
-    match poll_scoped(source, aois).await {
+    let (result, partial) = poll_scoped(source, aois).await;
+    match result {
         Ok(observations) => {
             // Only feeds describing current state have a meaningful lag, and
             // the freshest reading is what measures it — the oldest item in a
@@ -279,7 +280,22 @@ async fn poll_and_store(
                 rejected: written.skipped,
                 lag,
             };
-            state.record(Ok(outcome));
+            match partial {
+                None => state.record(Ok(outcome)),
+                Some(err) => {
+                    // An area that did not answer is a failed poll for the
+                    // scheduler — retried on its backoff, not at the next
+                    // cadence, which for a weekly crawl is the difference
+                    // between an hour and a week — but the areas that did
+                    // answer are already stored, and the health row says
+                    // both: degraded, with the reason.
+                    state.record(Err(&err));
+                    state.health = argus_core::SourceHealth::Degraded {
+                        reason: format!("an area did not answer: {err}"),
+                        observations: outcome.accepted,
+                    };
+                }
+            }
             // Only newly stored rows advance the lifetime counter; re-polled
             // duplicates would otherwise inflate it without bound.
             let _ = store
@@ -370,16 +386,18 @@ impl Runtime {
 /// collapses to one entity downstream, because the entity key is the aircraft's
 /// own address rather than anything about the request.
 ///
-/// A partial failure is not a failure: if one area answers and another does
-/// not, the data that did arrive is kept. Returning an error would throw away
-/// good observations because a neighbouring box timed out.
+/// A partial failure keeps what arrived: if one area answers and another
+/// does not, the data is returned and the area's error alongside it, so
+/// the caller can store the one and schedule a retry for the other.
+/// Returning only an error would throw away good observations because a
+/// neighbouring box timed out.
 async fn poll_scoped(
     source: &Arc<dyn Source>,
     aois: &[BoundingBox],
-) -> Result<Vec<argus_core::Observation>, SourceError> {
+) -> (Result<Vec<argus_core::Observation>, SourceError>, Option<SourceError>) {
     let descriptor = source.descriptor();
     if !matches!(descriptor.coverage, Coverage::Bounded) {
-        return poll_once(source, &argus_core::PollCtx::default()).await;
+        return (poll_once(source, &argus_core::PollCtx::default()).await, None);
     }
 
     let areas: Vec<BoundingBox> = if aois.is_empty() {
@@ -408,9 +426,9 @@ async fn poll_scoped(
     if merged.is_empty()
         && let Some(err) = last_error
     {
-        return Err(err);
+        return (Err(err), None);
     }
-    Ok(merged)
+    (Ok(merged), last_error)
 }
 
 /// Looks up whether a source has the credential its `AuthRequirement` names.
