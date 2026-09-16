@@ -68,8 +68,17 @@ const MIN_UNTYPED_SUBSTATION_KV: f64 = 33.0;
 /// finished is refused with a 429. On a refusal the tile waits this long
 /// (or what `Retry-After` says) and is asked again, up to
 /// [`RATE_LIMIT_RETRIES`] times, before it is given up for this cycle.
-const RATE_LIMIT_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+const RATE_LIMIT_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 const RATE_LIMIT_RETRIES: usize = 6;
+
+/// Between tiles, regardless: fifty-five heavy queries in five minutes,
+/// twice in an afternoon, got this address refused at the TCP level.
+const TILE_GAP: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// `/api/status` says how many slots this address has free and when the
+/// next frees; asked before each tile so a busy slot is waited for
+/// rather than run into.
+const STATUS_URL: &str = "https://overpass-api.de/api/status";
 
 pub struct PowerGrid {
     descriptor: SourceDescriptor,
@@ -117,6 +126,23 @@ impl PowerGrid {
         true
     }
 
+    /// Wait until Overpass says a slot is free, up to a few minutes. A
+    /// status page that cannot be read is not a reason to stop: the tile
+    /// is simply sent.
+    async fn wait_for_slot(&self) {
+        for _ in 0..8 {
+            let Ok(bytes) = self.http.get_bytes(STATUS_URL).await else { return };
+            let text = String::from_utf8_lossy(&bytes);
+            match slot_wait(&text) {
+                Some(std::time::Duration::ZERO) | None => return,
+                Some(wait) => {
+                    tracing::debug!(source = %self.descriptor.id, wait_s = wait.as_secs(), "waiting for an overpass slot");
+                    tokio::time::sleep(wait.min(std::time::Duration::from_secs(120))).await;
+                }
+            }
+        }
+    }
+
     fn release(&self, tile: &BoundingBox) {
         let mut done = self.done.lock().expect("tile lock poisoned");
         done.remove(&format!("{:.1},{:.1}", tile.west, tile.south));
@@ -135,6 +161,34 @@ pub fn query(tile: &BoundingBox) -> String {
          relation[\"power\"=\"plant\"]{b};\
          );out geom;"
     )
+}
+
+/// How long `/api/status` says to wait for a slot: zero when one is
+/// free now, the longest "in N seconds" otherwise, `None` when the page
+/// says nothing recognisable.
+///
+/// ```text
+/// Rate limit: 2
+/// 1 slots available now.
+/// Slot available after: 2026-09-16T17:10:00Z, in 23 seconds.
+/// ```
+pub fn slot_wait(status: &str) -> Option<std::time::Duration> {
+    let mut wait: Option<u64> = None;
+    for line in status.lines() {
+        let line = line.trim();
+        if let Some(n) = line.strip_suffix(" slots available now.").or_else(|| line.strip_suffix(" slot available now."))
+            && n.parse::<u32>().is_ok_and(|n| n > 0)
+        {
+            return Some(std::time::Duration::ZERO);
+        }
+        if line.starts_with("Slot available after:")
+            && let Some(rest) = line.rsplit("in ").next()
+            && let Some(secs) = rest.split_whitespace().next().and_then(|s| s.parse::<u64>().ok())
+        {
+            wait = Some(wait.map_or(secs, |w| w.min(secs)));
+        }
+    }
+    wait.map(|s| std::time::Duration::from_secs(s.max(1)))
 }
 
 /// Cut an area into tiles aligned to the tile size, as for the crime
@@ -174,6 +228,10 @@ impl Source for PowerGrid {
                 skipped += 1;
                 continue;
             }
+            if !out.is_empty() || failed > 0 {
+                tokio::time::sleep(TILE_GAP).await;
+            }
+            self.wait_for_slot().await;
             let url = reqwest::Url::parse_with_params(OVERPASS_URL, &[("data", query(tile))])
                 .map_err(|e| SourceError::Decode(e.to_string()))?;
             let mut result = self.http.get_bytes(url.as_str()).await;
@@ -507,6 +565,17 @@ mod tests {
         assert!(matches!(gas.geom, Some(Geometry::Polygon(_))), "the closed outer member is the outline");
         let p = gas.position.unwrap();
         assert!((p.lon + 1.59).abs() < 1e-9 && (p.lat - 51.61).abs() < 1e-9, "at the bounds centre");
+    }
+
+    #[test]
+    fn the_status_page_says_whether_to_wait() {
+        assert_eq!(slot_wait("Connected as: 1\nRate limit: 2\n2 slots available now.\n"), Some(std::time::Duration::ZERO));
+        assert_eq!(
+            slot_wait("Rate limit: 2\n0 slots available now.\nSlot available after: 2026-09-16T17:10:00Z, in 23 seconds.\nSlot available after: 2026-09-16T17:11:00Z, in 83 seconds.\n"),
+            Some(std::time::Duration::from_secs(23)),
+            "the soonest slot"
+        );
+        assert_eq!(slot_wait("<html>nonsense</html>"), None);
     }
 
     #[test]

@@ -657,6 +657,21 @@ impl Store {
         Ok(())
     }
 
+    /// When a source last polled successfully, across restarts, so a
+    /// weekly crawl of a shared public instance is not repeated because
+    /// the daemon was restarted twice in an afternoon.
+    pub async fn source_last_success(
+        &self,
+        source_id: &argus_core::SourceId,
+    ) -> Result<Option<DateTime<Utc>>, StoreError> {
+        let at: Option<Option<DateTime<Utc>>> =
+            sqlx::query_scalar("SELECT last_success FROM sources WHERE source_id = $1")
+                .bind(source_id.as_str())
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(at.flatten())
+    }
+
     /// Every registered source with its current health, for `GET /v1/sources`.
     pub async fn list_sources(&self) -> Result<Vec<model::SourceRow>, StoreError> {
         let rows = sqlx::query_as::<_, model::SourceRow>(

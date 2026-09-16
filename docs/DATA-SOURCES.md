@@ -384,6 +384,18 @@ under `out geom`; a closed one is the outline. Key `osm:way/123`; OSM ids do
 not expire, so a split way leaves its old id behind. Live: the Berkshire tile
 gave 2,120 lines, 1,343 substations, 401 plants. ODbL.
 
+**Overpass etiquette, learned the hard way**: the public instance gives an
+address two slots and holds one for a while after each heavy query, so
+tiles sent back to back get 429s (45 of 55 on the first daemon run), and
+fifty-five heavy queries twice in one afternoon — two daemon restarts, each
+re-crawling everything — got this address **refused at the TCP level** by
+both overpass-api.de servers within the hour. The driver now asks
+`/api/status` for a free slot before each tile, waits ten seconds between
+tiles, retries a 429 after a minute up to six times, and the runtime resumes
+any source with a cadence of six hours or more from its `last_success` after
+a restart instead of polling at once. Do not add a mirror to route around a
+block; wait for it to lift.
+
 ### NASA FIRMS active fires — done
 `firms.modaps.eosdis.nasa.gov/api/area/csv/{MAP_KEY}/{product}/world/1` for
 `VIIRS_SNPP_NRT`, `VIIRS_NOAA20_NRT`, `VIIRS_NOAA21_NRT`: ~70k rows and

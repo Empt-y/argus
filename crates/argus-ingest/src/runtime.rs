@@ -9,6 +9,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+/// Sources with a cadence at or above this resume from their last
+/// success after a restart rather than polling at once.
+const RESUME_THRESHOLD: Duration = Duration::from_secs(6 * 3600);
+
 /// How often to re-measure the store against its budget.
 const DISK_CHECK_INTERVAL: Duration = Duration::from_secs(300);
 
@@ -127,9 +131,33 @@ impl Runtime {
                     Cadence::Streaming | Cadence::Static => Duration::from_secs(60),
                 };
                 let jitter = startup_jitter(base_interval, index, count);
+                // A slow source that succeeded recently resumes where its
+                // cadence says, not at once: a weekly crawl of Overpass or
+                // TeleGeography repeated on every restart got this address
+                // refused by Overpass within an afternoon. Fast sources
+                // start straight away as before — a minute-old bus feed is
+                // worth nothing.
+                let resume = if base_interval >= RESUME_THRESHOLD {
+                    match store.source_last_success(&descriptor.id).await {
+                        Ok(Some(last)) => {
+                            let elapsed = (chrono::Utc::now() - last).to_std().unwrap_or_default();
+                            base_interval.saturating_sub(elapsed)
+                        }
+                        _ => Duration::ZERO,
+                    }
+                } else {
+                    Duration::ZERO
+                };
+                if resume > Duration::ZERO {
+                    tracing::info!(
+                        source = %descriptor.id,
+                        in_s = resume.as_secs(),
+                        "polled successfully within its cadence before the restart; resuming on schedule"
+                    );
+                }
                 tokio::select! {
                     _ = cancel.cancelled() => return,
-                    _ = tokio::time::sleep(jitter) => {}
+                    _ = tokio::time::sleep(jitter + resume) => {}
                 }
 
                 let mut state = SourceState::default();
