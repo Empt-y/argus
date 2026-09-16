@@ -38,6 +38,32 @@ impl Store {
         .bind(&id.key)
         .fetch_optional(&self.pool)
         .await?;
+        if row.is_some() || id.kind != argus_core::EntityKind::Feature {
+            return Ok(row);
+        }
+        // Features live in their own versioned table; the current version
+        // is the card. The point is a point on the surface, so a card for
+        // a wind farm anchors inside the farm.
+        let row = sqlx::query_as::<_, model::EntityRow>(
+            r#"
+            SELECT 'feature' AS entity_kind, feature_key AS entity_key, source_id, layer_id,
+                   valid_from AS observed_at,
+                   ST_X(ST_PointOnSurface(geom)) AS lon, ST_Y(ST_PointOnSurface(geom)) AS lat,
+                   CASE WHEN ST_GeometryType(geom) = 'ST_Point' THEN NULL
+                        ELSE ST_AsGeoJSON(geom)::jsonb END AS geom,
+                   NULL::double precision AS alt_m, NULL::alt_datum AS alt_datum,
+                   NULL::real AS course_deg, NULL::real AS heading_deg,
+                   NULL::real AS speed_mps, NULL::real AS vrate_mps,
+                   'live'::quality AS quality, label, attrs
+            FROM features
+            WHERE feature_key = $1 AND valid_to IS NULL
+            ORDER BY valid_from DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(&id.key)
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row)
     }
 
@@ -111,6 +137,14 @@ impl Store {
         ))
         .fetch_all(&self.pool)
         .await?;
+        // Features are counted from their own table: the live query above
+        // only sees the time-series entities.
+        let mut rows = rows;
+        for (layer_id, n) in self.feature_counts().await? {
+            if let Some(row) = rows.iter_mut().find(|r| r.layer_id == layer_id) {
+                row.live_entities += n;
+            }
+        }
         Ok(rows)
     }
 
@@ -260,6 +294,40 @@ impl Store {
                 }
             };
             out.extend(rows);
+
+            // Features, from their own table: the current version live, or
+            // the version that was current at the DVR instant.
+            let features = sqlx::query_as::<_, model::TileRow>(
+                r#"
+                SELECT 'feature' AS entity_kind, feature_key AS entity_key, source_id, layer_id,
+                       valid_from AS observed_at,
+                       ST_ClipByBox2D(ST_Simplify(geom, $5),
+                                      ST_MakeEnvelope($1, $2, $3, $4, 4326)) AS geometry,
+                       NULL::double precision AS alt_m,
+                       NULL::real AS course_deg, NULL::real AS heading_deg,
+                       NULL::real AS speed_mps, NULL::real AS vrate_mps,
+                       'live' AS quality, label
+                FROM features
+                WHERE geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)
+                  AND valid_from <= COALESCE($9, now())
+                  AND (valid_to IS NULL OR valid_to > COALESCE($9, now()))
+                  AND ($6::text[] IS NULL OR layer_id = ANY($6))
+                  AND ($7::text[] IS NULL OR 'feature' = ANY($7))
+                LIMIT $8
+                "#,
+            )
+            .bind(part.west)
+            .bind(part.south)
+            .bind(part.east)
+            .bind(part.north)
+            .bind(simplify_deg)
+            .bind(filter.layers_arg())
+            .bind(filter.kinds_arg())
+            .bind(limit)
+            .bind(at)
+            .fetch_all(&self.pool)
+            .await?;
+            out.extend(features);
         }
         out.truncate(limit as usize);
         Ok(out)

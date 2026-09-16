@@ -138,6 +138,22 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#56ccf2".into();
         s.min_zoom = 7;
     }),
+    ("offshore-platforms", |s| {
+        // Sixteen hundred points along the continental shelf, from z4: the
+        // question is what is out there off this coast. Steel grey.
+        s.geometry = GeometryClass::Point;
+        s.color = "#9aa5b1".into();
+        s.min_zoom = 4;
+    }),
+    ("wind-farms", |s| {
+        // Six hundred outlines, most of them planned. Areas, from z4, and
+        // a pale sea-green so a farm reads as a patch of water with a
+        // purpose rather than a hazard.
+        s.geometry = GeometryClass::Area;
+        s.color = "#7bdcb5".into();
+        s.min_zoom = 4;
+        s.max_zoom = 14;
+    }),
     ("carbon-intensity", |s| {
         // Fourteen regions that tile Great Britain: an area layer, wanted
         // from the lowest zoom because the whole point is the pattern across

@@ -117,6 +117,12 @@ enabled = true    # Transport for London road disruptions, Greater London
 [sources.carbon-intensity]
 enabled = true    # Grid carbon intensity by DNO region, on real boundaries
 
+[sources.offshore-platforms]
+enabled = true    # EMODnet oil and gas platforms, European waters, daily
+
+[sources.wind-farms]
+enabled = true    # EMODnet offshore wind farm outlines, daily
+
 [sources.metars]
 enabled = true    # Aerodrome METARs and TAFs, worldwide, from the AWC bulk cache
 

@@ -36,6 +36,8 @@ Entity kinds refer to `argus_core::EntityKind`.
 | `ground-stations` | `satnogs.rs` | SatNOGS stations and what each is listening to |
 | `road-disruptions` | `tfl.rs` | TfL road disruptions, Greater London |
 | `carbon-intensity` | `carbon.rs` | Grid carbon intensity on DNO boundaries |
+| `offshore-platforms` | `emodnet.rs` | EMODnet oil and gas platforms |
+| `wind-farms` | `emodnet.rs` | EMODnet offshore wind farm outlines |
 
 Notes on the ones that had something to teach follow.
 
@@ -193,6 +195,18 @@ draws as a great-circle path. About 4.4M rows a day, so it has to be filtered
 or aggregated server-side, which the ClickHouse dialect makes easy. Kind
 `event`.
 
+### EMODnet platforms and wind farms — done
+`ows.emodnet-humanactivities.eu/wfs` GetFeature as GeoJSON with
+`srsName=EPSG:4326`, which comes out longitude-first. `platforms` is 1,617
+points; `windfarmspoly` 600 outlines (a wind farm at 29°N 13°W is the
+Canaries, not a bug). `platformid` is missing or shared on a handful, so the
+key is the WFS feature id. These are the first `feature`-kind layers, and
+building them meant building the feature path: `Store::write_features`
+versions rows in `features` (a new version only when geometry, label or
+attrs change — compared in the database, because jsonb turns `41.0` into
+`41` and Rust would say "changed" every poll), and the tile, catalogue and
+detail queries read current features alongside entities. Polled daily.
+
 ### TfL road disruptions — done
 `api.tfl.gov.uk/Road/all/Disruption`, keyless, 131 records in 314 KB. Each
 has `point` as a JSON array *inside a string* (`"[0.054,51.471]"`) and a
@@ -296,8 +310,6 @@ GB fuel mix (a single national scalar, no geometry) and per-BM-unit output
 - **TfL Unified API** — keyless line status and bus arrivals with vehicle
   registrations; road disruptions are built (below). BODS carries TfL's bus
   positions already, so the arrivals route is moot.
-- **EMODnet Human Activities WFS** — offshore platforms and wind farms with
-  operator, status, capacity. Kind `feature`, European.
 - **FDSN station metadata** — Raspberry Shake (1,566 UK station-epochs) and
   EarthScope. `service.iris.edu` 307-redirects to `service.earthscope.org`;
   follow redirects or you silently get nothing. ORFEUS returns 204/404 for the
@@ -365,9 +377,9 @@ Easiest first, roughly most reusable first:
 9. ~~SatNOGS~~ — done.
 10. ~~TfL road disruptions~~ — done.
 11. ~~Carbon intensity on DNO boundaries~~ — done.
-12. Next candidates from the keyless list: Open-Meteo, EMODnet (kind
-    `feature`; flows through `entities` today, the `features` table is
-    unused), FDSN Raspberry Shake, data.police.uk.
+12. ~~EMODnet platforms and wind farms~~ — done, and the feature path with them.
+13. Next candidates from the keyless list: Open-Meteo, FDSN Raspberry Shake,
+    data.police.uk (its month-only dates need a decision on how to stamp them).
 
 ## Process notes
 

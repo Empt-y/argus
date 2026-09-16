@@ -575,6 +575,19 @@ fn build_sources(
         ));
     }
 
+    // EMODnet: offshore platforms and wind farms, the first feature layers.
+    // Steel in the sea does not move; polled daily and never retired.
+    if enabled("offshore-platforms") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::Emodnet::platforms(
+            http.clone(),
+        )));
+    }
+    if enabled("wind-farms") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::Emodnet::wind_farms(
+            http.clone(),
+        )));
+    }
+
     // Carbon intensity of the grid, by DNO region, on the regions' real
     // boundaries. The store backs the boundary cache so the 3 MB licence-area
     // file is fetched once in the life of the deployment, as for the flood

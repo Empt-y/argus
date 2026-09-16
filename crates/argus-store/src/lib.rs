@@ -11,6 +11,7 @@ use std::time::Duration;
 
 pub mod alerting;
 pub mod devices;
+pub mod features;
 pub mod horizon;
 pub mod model;
 pub mod serve;

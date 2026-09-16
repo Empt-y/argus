@@ -205,7 +205,24 @@ async fn poll_and_store(
                 chrono::Duration::zero()
             };
 
-            let written = match store.write_observations(&observations).await {
+            // Features go to their own versioned table; everything else is
+            // time-series. A source only ever emits one kind, but the split
+            // is by observation so a mixed batch would still land right.
+            let (features, timeseries): (Vec<_>, Vec<_>) = observations
+                .iter()
+                .cloned()
+                .partition(|o| o.entity.kind == argus_core::EntityKind::Feature);
+            let write = async {
+                let mut w = store.write_observations(&timeseries).await?;
+                if !features.is_empty() {
+                    let f = store.write_features(&features).await?;
+                    w.inserted += f.inserted;
+                    w.deduped += f.deduped;
+                    w.skipped += f.skipped;
+                }
+                Ok::<_, argus_store::StoreError>(w)
+            };
+            let written = match write.await {
                 Ok(w) => w,
                 Err(err) => {
                     // A store failure is ours, not the source's — so say so.

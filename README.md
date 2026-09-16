@@ -35,8 +35,8 @@ TAFs, radiosondes (SondeHub), every bus in England (Bus Open Data Service),
 UK storm overflows (nine water companies), Environment Agency flood warnings
 and river gauges, NOAA NDBC buoys, the Argo float array, every meteor the Global Meteor Network
 triangulates, the SatNOGS ground stations with what each is hearing, TfL's road disruptions across
-London, and the carbon intensity of the grid in each of Britain's fourteen
-distribution regions.
+London, the carbon intensity of the grid in each of Britain's fourteen
+distribution regions, and Europe's offshore platforms and wind farms.
 
 Not built yet: satellite imagery and fire detections, infrastructure layers
 (power grid, cables, BGP), SDR receivers, phone-as-sensor, the AR sky view.
@@ -138,6 +138,46 @@ cargo test --workspace                                   # unit tests, no DB
 ARGUS_TEST_DATABASE_URL=postgres://argus@localhost/argus_test cargo test --workspace
 ARGUS_NETWORK_TESTS=1 cargo test -p argus-ingest         # polls the real feeds
 ```
+
+## ⚠️ Disk space
+
+With every source enabled, Argus writes on the order of **10–15 GB a day**
+of raw observations, and keeps seven days of them. Most of that is one
+layer. Rows are about 440 bytes on disk including indexes; these are
+steady-state figures from a weekday, before any TimescaleDB compression.
+
+| Layer | Rows per day | Per day | Why |
+|---|---|---|---|
+| `buses` | 15–29 M | 6–12 GB | 28,000 buses reporting every 30 s, polled once a minute across the AOIs. Twenty times everything else together. |
+| `flights` (OpenSky global sweep) | ~5 M | ~2 GB | 50,000 aircraft every 15 min |
+| `flights` (adsb.fi/adsb.lol, AOIs) | ~2.5 M | ~1 GB | every aircraft in the AOIs, every 20 s |
+| `storm-overflows` | ~1.5 M | ~0.6 GB | 15,000 outfalls dated by poll time, every 15 min |
+| `satellites` | ~1.4 M | ~0.6 GB | ~1,000 objects propagated every minute |
+| `ground-stations` | ~0.6 M | ~0.3 GB | 4,300 stations dated by poll time, every 10 min |
+| `river-gauges` | ~0.4 M | ~0.2 GB | 4,000 gauges every 15 min |
+| `radiosondes` | ~0.3 M | ~0.1 GB | tracks of every balloon aloft |
+| `metars` | ~0.2 M | ~0.1 GB | 5,000 aerodromes, one row per new report |
+| `argo-floats` | ~0.1 M | ~50 MB | 4,300 floats dated by poll time, hourly |
+| everything else | < 0.1 M | < 50 MB | buoys, meteors, quakes, alerts, SIGMETs, TfL, carbon intensity, EMODnet |
+
+The dials, all in `argus.toml`:
+
+- **`[sources.<id>] cadence_secs`** — the biggest one. Buses at 300 s instead
+  of 60 is a fifth of the rows.
+- **`[[aoi]]`** — bounded sources (buses, adsb) are polled per area of
+  interest. An AOI that covers the whole country costs what the country costs.
+- **`[retention] raw`** — how long raw observations live; the one-minute
+  rollup in `tracks_1m` lasts `retention.tracks` and is much smaller.
+- **`[capture] disk_budget_gb`** — counted against *all* hypertable bytes.
+  Past `disk_warn_fraction` of it the scheduler drops to AOI-only polling,
+  silently from the map's point of view. The default is 80 GB; at full
+  ingest that is about a week.
+- Chunks older than two days are moved to the `argus_cold` tablespace by a
+  TimescaleDB job, so a small fast disk can hold the hot data and a large
+  slow one the rest. Point the tablespace at the big disk.
+
+Features (`wind-farms`, `offshore-platforms`) are versioned in their own
+table and only write when something changes; they cost nothing per poll.
 
 ## Adding a source
 
