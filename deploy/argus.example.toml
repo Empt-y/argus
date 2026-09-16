@@ -108,6 +108,9 @@ enabled = true    # Argo profiling floats, last surfacing of each, hourly
 [sources.meteors]
 enabled = true    # Global Meteor Network trajectories, a week on first start
 
+[sources.ground-stations]
+enabled = true    # SatNOGS ground stations and what each is listening to
+
 [sources.metars]
 enabled = true    # Aerodrome METARs and TAFs, worldwide, from the AWC bulk cache
 

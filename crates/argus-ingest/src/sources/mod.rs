@@ -21,6 +21,7 @@ pub mod sigmet;
 pub mod sondehub;
 pub mod stormoverflow;
 pub mod readsb;
+pub mod satnogs;
 pub mod usgs;
 
 pub use argo::ArgoFloats;
@@ -37,4 +38,5 @@ pub use sigmet::Sigmets;
 pub use sondehub::SondeHub;
 pub use stormoverflow::StormOverflows;
 pub use readsb::ReadsbProvider;
+pub use satnogs::SatnogsStations;
 pub use usgs::UsgsEarthquakes;

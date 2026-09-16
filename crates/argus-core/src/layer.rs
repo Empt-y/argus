@@ -138,6 +138,14 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#56ccf2".into();
         s.min_zoom = 7;
     }),
+    ("ground-stations", |s| {
+        // Four and a half thousand worldwide, most of them dark, so from
+        // z3 — the question is where the network can hear from, asked of a
+        // continent. The satellites' violet, paler: the same system, seen
+        // from the ground.
+        s.color = "#d7a9f0".into();
+        s.min_zoom = 3;
+    }),
     ("meteors", |s| {
         // A line from where it lit to where it went out, ten kilometres at
         // the median, so a line layer; and four thousand a night worldwide,

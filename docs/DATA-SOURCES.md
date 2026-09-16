@@ -33,6 +33,7 @@ Entity kinds refer to `argus_core::EntityKind`.
 | `buses` | `bods.rs` | Every bus in England, Bus Open Data Service |
 | `argo-floats` | `argo.rs` | Argo profiling floats, latest surfacing |
 | `meteors` | `gmn.rs` | Global Meteor Network trajectories |
+| `ground-stations` | `satnogs.rs` | SatNOGS stations and what each is listening to |
 
 Notes on the ones that had something to teach follow.
 
@@ -190,6 +191,18 @@ draws as a great-circle path. About 4.4M rows a day, so it has to be filtered
 or aggregated server-side, which the ClickHouse dialect makes easy. Kind
 `event`.
 
+### SatNOGS — done
+`network.satnogs.org/api/stations/` is 4,470 stations in one 3.4 MB
+request, no paging. `api/observations/?start=&end=` pages 25 at a time by a
+`Link: rel="next"` header (`HttpClient::get_page` reads it); ±20 minutes
+around now is a few pages and gives each station the pass it is recording
+or the next one, with the NORAD number as the join to `satellites`.
+4,135 of 4,470 are `Offline`, 207 sit on Null Island, and `success_rate` is
+a number on 2,137 stations and the boolean `false` on 2,333 — declared
+numeric, one `false` failed the whole list. Poll time is the observation;
+`Online` is live, the rest stale with `last_seen`. Kind `station`, layer
+`ground-stations`.
+
 ### Global Meteor Network — done
 `traj_summary_data/daily/`: one semicolon-separated file per solar-longitude
 day (04:00 to 04:00 UTC), 86 columns, 4,031 trajectories on a September
@@ -259,8 +272,6 @@ returned an empty `data` array and its swagger isn't at any standard path.
 - **data.police.uk** — street-level crime, OGL v3. Monthly, ~2 month lag,
   locations snapped to anonymised points; the UI needs to say both or it reads
   as precise. Kind `event`.
-- **SatNOGS** — 4,453 amateur ground stations plus observations, joinable to
-  the satellite layer by `norad_cat_id`. CC BY-SA 4.0.
 - **TfL Unified API** — keyless line status, road disruptions (107 live), and
   bus arrivals with vehicle registrations, which becomes a track if polled by
   `vehicleId`. Greater London only.
@@ -330,8 +341,9 @@ Easiest first, roughly most reusable first:
 6. ~~BODS~~ — done; the numbered list is finished.
 7. ~~Argo floats~~ — done.
 8. ~~Global Meteor Network~~ — done.
-9. Next candidates from the keyless list: SatNOGS, TfL road disruptions,
-   Elexon/carbon intensity, Open-Meteo, EMODnet, FDSN.
+9. ~~SatNOGS~~ — done.
+10. Next candidates from the keyless list: TfL road disruptions,
+    Elexon/carbon intensity, Open-Meteo, EMODnet, FDSN, data.police.uk.
 
 ## Process notes
 
@@ -381,6 +393,10 @@ Things that have gone wrong more than once, in the order they were learned.
   are stamped an hour in the future and look newer than every edit. A
   `find target -newermt "$(date)" -exec touch -d '3 hours ago' {} +` is
   cheaper than `cargo clean`.
+- A field that is a number in every sample can still be a boolean in half
+  the layer. SatNOGS's `success_rate` is `false` on 2,333 of 4,470 stations.
+  Count the JSON types per field over the whole response before declaring
+  any of them; `serde_json::Value` for the doubtful ones costs nothing.
 - Look at line endings in a hex dump, not a terminal. GMN's files end every
   line `\n\r`; `head` shows a clean file and `str::lines` hands back lines
   that begin with `\r`, which fail every `starts_with`.

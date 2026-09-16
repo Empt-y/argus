@@ -56,6 +56,26 @@ pub struct HttpClient {
     pacer: std::sync::Arc<governor::DefaultKeyedRateLimiter<String>>,
 }
 
+/// A response body with its headers.
+pub struct Page {
+    pub body: Vec<u8>,
+    pub headers: reqwest::header::HeaderMap,
+}
+
+impl Page {
+    /// The URL in a `Link` header with `rel="next"`, if there is one.
+    pub fn next_link(&self) -> Option<String> {
+        let link = self.headers.get(reqwest::header::LINK)?.to_str().ok()?;
+        link.split(',')
+            .filter(|part| part.contains("rel=\"next\""))
+            .find_map(|part| {
+                let start = part.find('<')? + 1;
+                let end = part[start..].find('>')? + start;
+                Some(part[start..end].to_string())
+            })
+    }
+}
+
 impl HttpClient {
     pub fn new(timeout: Duration) -> Result<Self, SourceError> {
         Self::build(timeout, false)
@@ -89,11 +109,9 @@ impl HttpClient {
             // the strictest budget any provider here publishes. Sources that
             // poll once a cadence never notice it; only a source issuing a
             // burst — a tiled area sweep — is ever actually paced.
-            pacer: std::sync::Arc::new(governor::RateLimiter::keyed(
-                governor::Quota::per_second(
-                    std::num::NonZeroU32::new(1).expect("1 is not zero"),
-                ),
-            )),
+            pacer: std::sync::Arc::new(governor::RateLimiter::keyed(governor::Quota::per_second(
+                std::num::NonZeroU32::new(1).expect("1 is not zero"),
+            ))),
         })
     }
 
@@ -119,9 +137,7 @@ impl HttpClient {
             .await
             .map_err(|e| SourceError::Transport(describe(&e)))?;
         let status = response.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED
-            || status == reqwest::StatusCode::FORBIDDEN
-        {
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(SourceError::Auth(format!("login rejected ({status})")));
         }
         if !status.is_success() {
@@ -146,6 +162,13 @@ impl HttpClient {
     /// GET a URL, enforcing the size cap while the body streams rather than
     /// after it has already been buffered.
     pub async fn get_bytes(&self, url: &str) -> Result<Vec<u8>, SourceError> {
+        Ok(self.get_page(url).await?.body)
+    }
+
+    /// GET a URL and keep the response headers as well as the body, for the
+    /// upstreams that page with `Link: <…>; rel="next"` and nothing in the
+    /// body says where the next page is.
+    pub async fn get_page(&self, url: &str) -> Result<Page, SourceError> {
         self.pace(url).await;
         let response = self
             .inner
@@ -169,7 +192,9 @@ impl HttpClient {
             return Err(SourceError::Auth(format!("upstream returned {status}")));
         }
         if status == reqwest::StatusCode::FORBIDDEN {
-            return Err(SourceError::Forbidden(format!("upstream returned {status}")));
+            return Err(SourceError::Forbidden(format!(
+                "upstream returned {status}"
+            )));
         }
         if !status.is_success() {
             return Err(SourceError::Transport(format!(
@@ -187,6 +212,7 @@ impl HttpClient {
             });
         }
 
+        let headers = response.headers().clone();
         use futures::StreamExt;
         let mut stream = response.bytes_stream();
         let mut buf: Vec<u8> = Vec::new();
@@ -201,7 +227,7 @@ impl HttpClient {
             }
             buf.extend_from_slice(&chunk);
         }
-        Ok(buf)
+        Ok(Page { body: buf, headers })
     }
 
     /// GET and deserialise JSON.
@@ -224,6 +250,31 @@ mod tests {
         // ask for a contactable UA and throttle or block generic ones.
         assert!(USER_AGENT.starts_with("argus/"));
         assert!(USER_AGENT.contains("github.com"));
+    }
+
+    #[test]
+    fn the_next_page_is_read_from_the_link_header_as_satnogs_sends_it() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::LINK,
+            "<https://x/api/?cursor=abc&format=json>; rel=\"next\", <https://x/api/?cursor=zzz>; rel=\"prev\""
+                .parse()
+                .unwrap(),
+        );
+        let page = Page {
+            body: Vec::new(),
+            headers,
+        };
+        assert_eq!(
+            page.next_link().as_deref(),
+            Some("https://x/api/?cursor=abc&format=json")
+        );
+
+        let last = Page {
+            body: Vec::new(),
+            headers: reqwest::header::HeaderMap::new(),
+        };
+        assert_eq!(last.next_link(), None, "no header, no next page");
     }
 
     #[test]

@@ -575,6 +575,15 @@ fn build_sources(
         ));
     }
 
+    // SatNOGS: the amateur satellite ground station network and what each
+    // station is listening to, which joins to the satellites layer by NORAD
+    // number.
+    if enabled("ground-stations") {
+        sources.push(std::sync::Arc::new(
+            argus_ingest::sources::SatnogsStations::new(http.clone()),
+        ));
+    }
+
     // Meteors: every trajectory the Global Meteor Network solved, from its
     // daily files. Events with a line on the ground; a week of them on a
     // fresh start, today and yesterday thereafter. The patient client: the
