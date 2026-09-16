@@ -46,6 +46,7 @@ Entity kinds refer to `argus_core::EntityKind`.
 | `cable-landings` | `cables.rs` | TeleGeography landing points and what lands there |
 | `power-grid` | `osmpower.rs` | OSM power lines, substations and plants via Overpass, per AOI |
 | `fires` | `firms.rs` | NASA FIRMS VIIRS active fires, worldwide, last day (keyed) |
+| `hf-propagation` | `wspr.rs` | WSPR beacon paths touching each AOI, great circles, ten-minutely |
 | `river-discharge` | `glofas.rs` | GloFAS discharge via Open-Meteo, sampled at EA river gauges |
 | `fireballs` | `cneos.rs` | NASA/JPL CNEOS fireballs seen from orbit, since 1988 |
 | `airports` | `ourairports.rs` | OurAirports gazetteer: every airfield with runways |
@@ -213,12 +214,19 @@ area has two sea cells (the Thames estuary and the Wash); the British Isles
 area 65. `flood-api…/v1/flood` (GloFAS river discharge) is still unbuilt:
 it needs river points to sample, which a lattice does not give.
 
-### wspr.live (HF propagation)
-`https://db1.wspr.live/?query=…` — ClickHouse over HTTP, keyless. 30,263 spots
-in a ten-minute window, each with transmitter and receiver coordinates, so it
-draws as a great-circle path. About 4.4M rows a day, so it has to be filtered
-or aggregated server-side, which the ClickHouse dialect makes easy. Kind
-`event`.
+### wspr.live (HF propagation) — done
+`https://db1.wspr.live/?query=…` — ClickHouse over HTTP, keyless, CC BY-NC.
+30,452 spots in a ten-minute window worldwide. Aggregated server-side per
+`(band, tx_loc, rx_loc)` with the transmitter or receiver inside the AOI
+box: 6,770 rows, 1.3 MB, 0.37 s for the British Isles. ClickHouse rejects an
+aggregate alias that shadows a column used in WHERE (`any(tx_lat) AS tx_lat`
+→ `ILLEGAL_AGGREGATION`); alias to a new name. Kind **`measure`**, not
+event: a path open ten minutes ago is a reading of the ionosphere now, and
+the six-hour measure horizon retires it honestly. Drawn as the great circle
+(a vertex every 250 km; the path to Sydney goes over the Middle East, not
+the Atlantic). Key `wspr:{band}:{tx_loc}:{rx_loc}`, ten-minute cadence,
+~40k rows an hour with both AOIs. 10 rows in 6,770 had both ends in the
+same square (a station hearing itself); dropped.
 
 ### EMODnet platforms and wind farms — done
 `ows.emodnet-humanactivities.eu/wfs` GetFeature as GeoJSON with
@@ -513,9 +521,9 @@ Easiest first, roughly most reusable first:
     ~~Phase 7 fires (FIRMS)~~ — done, keyed.
 15. ~~CNEOS fireballs, OurAirports~~ — done.
 16. ~~Open-Meteo flood~~ — done, sampled at the EA gauges.
-17. Next candidates from the keyless list: wspr.live (needs server-side
-    aggregation), AuroraWatch UK (a national scalar, not spatial), FSA
-    food hygiene. Phase 7
+17. ~~wspr.live~~ — done, aggregated per path in ClickHouse.
+18. Left on the keyless list: AuroraWatch UK (a national scalar, not
+    spatial), FSA food hygiene. Phase 7
     still unbuilt: imagery, nightlights. Phase 8: BGP needs a geolocation
     step before it is spatial.
 

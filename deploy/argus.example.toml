@@ -135,6 +135,9 @@ enabled = true    # Open-Meteo marine waves and sea temperature, same lattice, t
 [sources.river-discharge]
 enabled = true    # GloFAS river discharge via Open-Meteo, sampled at EA river gauges, daily
 
+[sources.hf-propagation]
+enabled = true    # WSPR beacon paths with an end in each [[aoi]], great circles, every ten minutes
+
 [sources.seismographs]
 enabled = true    # Raspberry Shake citizen seismographs, worldwide, six-hourly
 

@@ -16,7 +16,7 @@ this box, and where did it reappear".
 This is a personal project and it is early, but it works end to end. As of
 September 2026:
 
-- A Rust daemon (`argusd`) polls 33 upstream feeds into 30 layers, with
+- A Rust daemon (`argusd`) polls 34 upstream feeds into 31 layers, with
   provider failover chains, per-provider budgets and a disk budget.
 - Postgres/PostGIS/TimescaleDB store with raw observations rolled up into
   tracks and daily summaries.
@@ -43,8 +43,9 @@ street-level crime for England and Wales (data.police.uk), every submarine
 cable and where it lands (TeleGeography), the power grid — lines, substations
 and plants — from OpenStreetMap, every active fire the VIIRS satellites
 saw in the last day (NASA FIRMS, keyed), every fireball seen from orbit
-since 1988 (CNEOS), and every airfield in the world with its runways
-(OurAirports).
+since 1988 (CNEOS), every airfield in the world with its runways
+(OurAirports), and every HF radio path open right now as the WSPR beacon
+network hears it (wspr.live).
 
 Not built yet: satellite imagery and fire detections, infrastructure layers
 (power grid, cables, BGP), SDR receivers, phone-as-sensor, the AR sky view.
@@ -168,6 +169,7 @@ steady-state figures from a weekday, before any TimescaleDB compression.
 | `radiosondes` | ~0.3 M | ~0.1 GB | tracks of every balloon aloft |
 | `metars` | ~0.2 M | ~0.1 GB | 5,000 aerodromes, one row per new report |
 | `fires` | ~0.2 M | ~0.1 GB | 200,000 VIIRS detections a day worldwide, each written once |
+| `hf-propagation` | ~1 M | ~0.4 GB | 7,000 beacon paths touching the AOIs every ten minutes, each a great circle |
 | `street-crime` | ~0.2 M | ~0.1 GB | half a million crimes a month across England and Wales, rewritten every three days |
 | `argo-floats` | ~0.1 M | ~50 MB | 4,300 floats dated by poll time, hourly |
 | `seismographs` | < 0.1 M | ~10 MB | 6,200 stations dated by poll time, six-hourly |

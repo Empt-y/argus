@@ -190,6 +190,15 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#2f6fb0".into();
         s.min_zoom = 6;
     }),
+    ("hf-propagation", |s| {
+        // Thousands of great circles from the area to the rest of the
+        // world every ten minutes; a line layer from z2, where the shape
+        // of an opening reads, and not past z10. A pale ionospheric green.
+        s.geometry = GeometryClass::Line;
+        s.color = "#9be7c4".into();
+        s.min_zoom = 2;
+        s.max_zoom = 10;
+    }),
     ("seismographs", |s| {
         // Six thousand worldwide, clustered where people are; from z3 so
         // the question "where can the ground be heard" is asked of a

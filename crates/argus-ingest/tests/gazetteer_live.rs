@@ -65,3 +65,32 @@ async fn every_airfield_in_the_world_arrives_with_heathrow_and_its_runways() {
     let keys: std::collections::HashSet<_> = obs.iter().map(|o| &o.entity.key).collect();
     assert_eq!(keys.len(), obs.len(), "idents are unique");
 }
+
+#[tokio::test]
+async fn thousands_of_hf_paths_touch_the_british_isles_every_ten_minutes() {
+    if !gated() {
+        return;
+    }
+    let http = argus_ingest::HttpClient::new(std::time::Duration::from_secs(30)).expect("an http client");
+    let ctx = argus_core::PollCtx {
+        bbox: Some(argus_core::BoundingBox::new(-11.0, 49.5, 2.0, 61.0)),
+        ..Default::default()
+    };
+    let obs = match argus_ingest::sources::WsprPaths::new(http).poll(&ctx).await {
+        Ok(o) => o,
+        Err(err) => return skip_or_panic("wspr", err),
+    };
+    // 6,770 in a September evening; the band is quieter in the small hours.
+    assert!(obs.len() > 500, "{} paths", obs.len());
+    let now = chrono::Utc::now();
+    let mut bands = std::collections::BTreeSet::new();
+    for o in &obs {
+        assert_eq!(o.entity.kind, EntityKind::Measure);
+        assert!(matches!(o.geom, Some(geo_types::Geometry::LineString(_))));
+        assert!(now - o.observed_at < chrono::Duration::minutes(20), "{} last heard {}", o.entity.key, o.observed_at);
+        bands.insert(o.attrs["band"].as_str().unwrap().to_string());
+    }
+    assert!(bands.len() >= 4, "bands open: {bands:?}");
+    let far = obs.iter().filter(|o| o.attrs["distance_km"].as_f64().unwrap() > 5_000.0).count();
+    assert!(far > 0, "no path over 5,000 km; the great circles have nothing to prove");
+}

@@ -1618,6 +1618,66 @@ pub fn river_discharge<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, 
     card
 }
 
+// --- HF propagation ---------------------------------------------------------
+
+pub fn hf_path<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "HF propagation path (WSPR)");
+    let band = t.str("band").unwrap_or("HF").to_string();
+    let tx = t.str("tx_callsign").map(str::to_string);
+    let rx = t.str("rx_callsign").map(str::to_string);
+    let tx_loc = t.str("tx_locator").unwrap_or("?").to_string();
+    let rx_loc = t.str("rx_locator").unwrap_or("?").to_string();
+    let km = t.f64("distance_km");
+    let spots = t.i64("spots");
+    let snr = t.f64("best_snr_db");
+    let power = t.f64("tx_power_dbm");
+    let window = t.i64("window_minutes").unwrap_or(10);
+    card.title = format!("{band}: {} → {}", tx.clone().unwrap_or_else(|| tx_loc.clone()), rx.clone().unwrap_or_else(|| rx_loc.clone()));
+    let mut summary = format!("A {band} beacon");
+    if let Some(p) = power {
+        summary.push_str(&format!(" at {}", dbm_words(p)));
+    }
+    if let Some(k) = km {
+        summary.push_str(&format!(" heard {} km away", num(k, 0)));
+    }
+    match spots {
+        Some(1) => summary.push_str(&format!(" once in the last {window} minutes")),
+        Some(n) => summary.push_str(&format!(" {n} times in the last {window} minutes")),
+        None => {}
+    }
+    if let Some(s) = snr {
+        summary.push_str(&format!(", best signal {} dB", num(s, 0)));
+    }
+    summary.push_str(". The band is open along this path.");
+    card.summary = Some(summary);
+    let mut rows = vec![row("Band", band)];
+    push(&mut rows, "Transmitter", tx.map(|c| format!("{c} ({tx_loc})")));
+    push(&mut rows, "Receiver", rx.map(|c| format!("{c} ({rx_loc})")));
+    push(&mut rows, "Distance", km.map(|k| format!("{} km", num(k, 0))));
+    push(&mut rows, "Bearing", t.f64("bearing_deg").map(bearing));
+    push(&mut rows, "Transmit power", power.map(dbm_words));
+    if let Some(s) = snr {
+        rows.push(row_note("Best signal", format!("{} dB", num(s, 0)), "signal to noise in 2.5 kHz; WSPR decodes down to about −30 dB"));
+    }
+    push(&mut rows, "Spots", spots.map(|n| format!("{n} in {window} min")));
+    push(&mut rows, "Last heard", t.str("last_spot").and_then(when));
+    t.skip("band_mhz");
+    card.sections.extend(section(None, rows));
+    card.links.push(Link { label: "wspr.live".into(), url: "https://wspr.live/".into() });
+    card
+}
+
+/// `37 dBm` → `5 W`; `23 dBm` → `200 mW`.
+fn dbm_words(dbm: f64) -> String {
+    let watts = 10f64.powf((dbm - 30.0) / 10.0);
+    if watts >= 1.0 {
+        format!("{} W", num(watts, if watts >= 10.0 { 0 } else { 1 }))
+    } else {
+        format!("{} mW", num(watts * 1000.0, 0))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{card, Subject};
@@ -1810,5 +1870,16 @@ mod tests {
         assert_eq!(c.summary.as_deref(), Some("Modelled flow of 0.3 m³/s today, falling — 3.1 m³/s a week ago. A 5 km river-model cell, not the gauge's own reading."));
         assert_eq!(value(&c, "Last 7 days"), "3.1 → 1.7 → 0.8 → 0.5 → 0.4 → 0.8 → 0.3");
         assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
+    }
+
+    #[test]
+    fn a_propagation_path_reads_as_a_beacon_heard() {
+        let c = present("hf-propagation", serde_json::json!({"band": "40 m", "band_mhz": 7, "tx_callsign": "G4LRP", "rx_callsign": "OE3GBB", "tx_locator": "IO91ta", "rx_locator": "JN87aq", "distance_km": 1242.0, "bearing_deg": 104.0, "spots": 3, "best_snr_db": -18.0, "tx_power_dbm": 23.0, "last_spot": "2026-09-16T18:28:00Z", "window_minutes": 10}), "x");
+        assert_eq!(c.title, "40 m: G4LRP → OE3GBB");
+        assert_eq!(c.summary.as_deref(), Some("A 40 m beacon at 200 mW heard 1,242 km away 3 times in the last 10 minutes, best signal -18 dB. The band is open along this path."));
+        assert_eq!(value(&c, "Transmit power"), "200 mW");
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
+        assert_eq!(super::dbm_words(37.0), "5 W");
+        assert_eq!(super::dbm_words(40.0), "10 W");
     }
 }

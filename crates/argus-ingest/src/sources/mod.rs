@@ -35,6 +35,7 @@ pub mod readsb;
 pub mod raspberryshake;
 pub mod satnogs;
 pub mod usgs;
+pub mod wspr;
 
 pub use argo::ArgoFloats;
 pub use bods::Buses;
@@ -64,3 +65,4 @@ pub use readsb::ReadsbProvider;
 pub use raspberryshake::RaspberryShake;
 pub use satnogs::SatnogsStations;
 pub use usgs::UsgsEarthquakes;
+pub use wspr::WsprPaths;

@@ -621,6 +621,14 @@ fn build_sources(
         )));
     }
 
+    // WSPR: every HF path heard in the last ten minutes with an end in
+    // an area, as great circles, from wspr.live's ClickHouse.
+    if enabled("hf-propagation") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::WsprPaths::new(
+            http.clone(),
+        )));
+    }
+
     // Raspberry Shake: the citizen seismograph network, from its FDSN
     // station service. Six-hourly; stations do not move.
     if enabled("seismographs") {
