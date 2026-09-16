@@ -2,8 +2,8 @@
 
 A self-hosted server that collects public signals about the physical world —
 aircraft, ships, satellites, earthquakes, weather warnings, river levels,
-sewage overflows, ocean buoys — stores the history, and serves it to a 3D globe
-in the browser and to an Android app.
+sewage overflows, ocean buoys, airfield weather — stores the history, and
+serves it to a 3D globe in the browser and to an Android app.
 
 The point of storing the history is that you can scrub backwards. Most tools
 in this space show you the world right now and forget it the moment you close
@@ -30,9 +30,9 @@ September 2026:
 
 Live layers right now: flights (adsb.lol → adsb.fi → OpenSky), satellites
 (CelesTrak → Space-Track, propagated with SGP4), earthquakes (USGS → EMSC),
-US weather alerts (NWS), aviation SIGMETs, radiosondes (SondeHub), UK storm
-overflows (nine water companies), Environment Agency flood warnings and river
-gauges, and NOAA NDBC buoys.
+US weather alerts (NWS), aviation SIGMETs and aerodrome METARs with their
+TAFs, radiosondes (SondeHub), UK storm overflows (nine water companies),
+Environment Agency flood warnings and river gauges, and NOAA NDBC buoys.
 
 Not built yet: satellite imagery and fire detections, infrastructure layers
 (power grid, cables, BGP), SDR receivers, phone-as-sensor, the AR sky view.

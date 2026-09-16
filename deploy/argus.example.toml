@@ -102,6 +102,9 @@ enabled = true    # Environment Agency river, tide and rainfall gauges, UK
 [sources.buoys]
 enabled = true    # NOAA NDBC buoys and coastal stations
 
+[sources.metars]
+enabled = true    # Aerodrome METARs and TAFs, worldwide, from the AWC bulk cache
+
 # Keyed sources, off until a credential is supplied.
 [sources.aisstream]
 enabled = false

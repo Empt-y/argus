@@ -150,6 +150,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "csv",
+ "flate2",
  "futures",
  "geo-types",
  "governor",

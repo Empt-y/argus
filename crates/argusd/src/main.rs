@@ -539,6 +539,15 @@ fn build_sources(
         )));
     }
 
+    // Aerodrome weather from the same centre, but from its bulk cache rather
+    // than its query API, which thins by bounding-box area: the whole network
+    // is one 250 KB file, and asking for it any other way returns a sample.
+    if enabled("metars") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::Metars::new(
+            http.clone(),
+        )));
+    }
+
     // Environment Agency flood monitoring: warnings and gauges, from one API
     // but as two sources. A warning is an area people act on; a gauge is one of
     // 5,500 dots reporting a level. Different cadences, different layers, and a

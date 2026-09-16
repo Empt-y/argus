@@ -145,6 +145,15 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#2dd4bf".into();
         s.min_zoom = 3;
     }),
+    ("metars", |s| {
+        // Five thousand aerodromes worldwide, a third of them in the United
+        // States, so from z4: the question is "what is the weather along this
+        // route", asked at the scale of a country. Sky blue, and paler than
+        // the water layers around it — this is the air above the aerodrome,
+        // not the sea beside it.
+        s.color = "#90caf9".into();
+        s.min_zoom = 4;
+    }),
     ("storm-overflows", |s| {
         // Brown, and the one layer here where that is a description rather than
         // a palette choice. Visible from z5 because the question is regional —

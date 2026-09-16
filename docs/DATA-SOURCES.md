@@ -186,10 +186,25 @@ draws as a great-circle path. About 4.4M rows a day, so it has to be filtered
 or aggregated server-side, which the ClickHouse dialect makes easy. Kind
 `event`.
 
-### NOAA Aviation Weather Center (METAR/TAF)
-`https://aviationweather.gov/api/data/metar?bbox=49,-11,61,2&format=json`
-gives 60 UK stations including RAF aerodromes; `/taf` likewise. SIGMETs from
-the same API are already built. Keyless, public domain. Kind `station`.
+### NOAA Aviation Weather Center (METAR/TAF) — done
+Built from the bulk cache, not the query API. `api/data/metar?bbox=` thins
+by bounding-box area — 62 for the UK box, 100 for all of Europe, 158 for the
+world — and there is no documented way to turn that off (`help=true` names
+`zoom` and `density` parameters the spec does not). The cache files are the
+whole network in one request each:
+
+- `data/cache/metars.cache.csv.gz` — 5,128 aerodromes, 250 KB, rebuilt every
+  minute. 44 columns read by position because four are called `sky_cover`;
+  the driver checks the header verbatim and fails the poll if it moves.
+- `data/cache/tafs.cache.xml.gz` — 2,971 forecasts, 327 KB; the `.csv.gz`
+  the naming pattern suggests is a 404. Attached to the aerodrome's station
+  as raw text plus validity, refreshed every 30 minutes.
+- `data/cache/stations.cache.json.gz` — 9,875 sites, names and countries,
+  refreshed daily.
+
+Served as `application/octet-stream` with no `Content-Encoding`, so the HTTP
+layer does not inflate them; the driver does. Keyless, public domain. Kind
+`station`, layer `metars`, global.
 
 ### Elexon Insights and National Grid Carbon Intensity
 `https://data.elexon.co.uk/bmrs/api/v1/datasets/FUELINST` for 5-minute GB fuel
@@ -272,7 +287,7 @@ with a position and a clock.
 Easiest first, roughly most reusable first:
 
 1. ~~SondeHub~~ — done; reused the aircraft track machinery.
-2. ~~Aviation weather~~ — SIGMETs done; METAR/TAF still to do.
+2. ~~Aviation weather~~ — done; SIGMETs, then METAR/TAF from the bulk cache.
 3. ~~Storm overflows~~ — done; nine feeds, two schemas.
 4. ~~NDBC buoys~~ — done.
 5. ~~EA flood monitoring~~ — done.
@@ -308,3 +323,17 @@ Things that have gone wrong more than once, in the order they were learned.
 - Look at what actually landed in the store. The NDBC live test passed with
   HTML in the station notes because nothing asserted on the text; the stored
   row is where it showed.
+- A bounding box that returns a plausible count is not evidence of
+  completeness. AWC's METAR query returned 62 UK stations, which matched the
+  research note; the same box split in two returned 90, and the bulk cache
+  had 110. Split the box once and compare before believing a bbox endpoint
+  returns everything inside it.
+- A `_ft` column is not necessarily in feet, and a `_c` column is not
+  necessarily in degrees. AWC's `vert_vis_ft` is in hundreds of feet and its
+  `maxT24hr_c` is in tenths of a degree; both are only visible next to a
+  column that is scaled correctly. Skip a column you cannot reconcile rather
+  than publish it under a unit it does not have.
+- The machine's own clock is an input. Every station layer read as `delayed`
+  by about an hour on the day METARs were built, and the cause was Athena
+  running 59 minutes ahead with NTP off, not the feeds. Check `date -u`
+  against an upstream `Date:` header before reading lag as a source fault.

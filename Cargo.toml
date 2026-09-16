@@ -92,6 +92,7 @@ governor = "0.7"
 rand = "0.8"
 base64 = "0.22"
 csv = "1"
+flate2 = "1"
 quick-xml = { version = "0.37", features = ["serialize"] }
 
 [workspace.lints.rust]
