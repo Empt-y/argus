@@ -190,7 +190,12 @@ impl Store {
                     sqlx::query_as::<_, model::TileRow>(&format!(
                         r#"
                         SELECT entity_kind, entity_key, source_id, layer_id, observed_at,
-                               ST_Simplify(COALESCE(geom, position), $5) AS geometry,
+                               -- Clipped to the (buffered) tile box: a country-sized
+                               -- polygon encoded whole into every tile it touches
+                               -- overflows the renderer's 16-bit vertex coordinates
+                               -- at the zooms where one tile is a county.
+                               ST_ClipByBox2D(ST_Simplify(COALESCE(geom, position), $5),
+                                              ST_MakeEnvelope($1, $2, $3, $4, 4326)) AS geometry,
                                alt_m, course_deg, heading_deg, speed_mps, vrate_mps,
                                quality, label
                         FROM entities
@@ -224,7 +229,8 @@ impl Store {
                                t.entity_kind, t.entity_key, t.source_id,
                                COALESCE(s.layer_id, t.source_id) AS layer_id,
                                t.bucket AS observed_at,
-                               ST_Simplify(COALESCE(t.geom, t.position), $5) AS geometry,
+                               ST_ClipByBox2D(ST_Simplify(COALESCE(t.geom, t.position), $5),
+                                              ST_MakeEnvelope($1, $2, $3, $4, 4326)) AS geometry,
                                t.alt_m, t.course_deg, t.heading_deg,
                                t.speed_mps, t.vrate_mps, t.quality, t.label
                         FROM tracks_1m t

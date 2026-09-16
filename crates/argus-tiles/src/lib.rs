@@ -118,6 +118,36 @@ impl Tiler {
     }
 }
 
+/// Web Mercator, EPSG:3857, from degrees. Latitude is clamped to the
+/// projection's limit so a pole does not become infinity.
+fn mercator(lon: f64, lat: f64) -> (f64, f64) {
+    // atan(sinh(π)): the latitude of the world tile's edge, computed the
+    // same way `TileCoord::bounds` computes it, so the two agree to the bit.
+    let limit = std::f64::consts::PI.sinh().atan().to_degrees();
+    let lat = lat.clamp(-limit, limit);
+    let x = lon.to_radians() * 6_378_137.0;
+    // asinh(tan φ) is ln(tan(π/4 + φ/2)) in a form that is odd in floating
+    // point, so the two edges of the world tile are equal and opposite.
+    let y = lat.to_radians().tan().asinh() * 6_378_137.0;
+    (x, y)
+}
+
+/// A tile's bounds in Web Mercator metres: left, bottom, right, top.
+fn mercator_bounds(bounds: argus_core::geo::BoundingBox) -> (f64, f64, f64, f64) {
+    let (left, bottom) = mercator(bounds.west, bounds.south);
+    let (right, top) = mercator(bounds.east, bounds.north);
+    (left, bottom, right, top)
+}
+
+/// The geometry with every vertex projected.
+fn to_mercator(g: &geo_types::Geometry<f64>) -> geo_types::Geometry<f64> {
+    use geo::MapCoords;
+    g.map_coords(|c| {
+        let (x, y) = mercator(c.x, c.y);
+        geo_types::Coord { x, y }
+    })
+}
+
 /// Group rows into MVT layers and encode.
 ///
 /// Split out from the query so the encoding is testable without a database —
@@ -174,13 +204,16 @@ fn encode_layer(
         let Some(geometry) = row.geometry.geometry.as_ref() else {
             continue;
         };
-        let mut feature = match geometry.to_mvt(
-            EXTENT,
-            bounds.west,
-            bounds.south,
-            bounds.east,
-            bounds.north,
-        ) {
+        // Encoded in Web Mercator, which is what a tile is. Handing `to_mvt`
+        // degrees with the tile's latitude edges maps latitude linearly
+        // across the tile, and Mercator is not linear in latitude: at z2 a
+        // point at 55°N landed nine degrees north of itself, and the DNO
+        // regions drew a second Britain off Iceland. Negligible in a z12
+        // tile a tenth of a degree tall, which is why it went unnoticed
+        // until the first country-sized polygon.
+        let projected = to_mercator(geometry);
+        let (left, bottom, right, top) = mercator_bounds(bounds);
+        let mut feature = match projected.to_mvt(EXTENT, left, bottom, right, top) {
             Ok(f) => f,
             Err(err) => {
                 tracing::debug!(layer = layer_id, entity = row.entity_key, "unencodable geometry: {err}");
@@ -337,8 +370,12 @@ mod tests {
         assert_eq!(geometry[0], 9, "one MoveTo");
         let x = (geometry[1] >> 1) as i32 ^ -((geometry[1] & 1) as i32);
         let y = (geometry[2] >> 1) as i32 ^ -((geometry[2] & 1) as i32);
-        assert_eq!(x, 2048);
-        assert_eq!(y, 2048);
+        // geozero floors the scaled coordinate, and the Mercator scaling of
+        // the world tile's edges lands a last bit either side of the centre.
+        // One unit in 4096 is nothing on screen; exact equality was luck with
+        // the old degree units, and the point of this test is the centre.
+        assert!((2047..=2048).contains(&x), "x {x}");
+        assert!((2047..=2048).contains(&y), "y {y}");
     }
 
     #[test]
@@ -459,6 +496,25 @@ mod tests {
         let geometry = &tile.layers[0].features[0].geometry;
         let x = (geometry[1] >> 1) as i32 ^ -((geometry[1] & 1) as i32);
         assert!(x < 0, "expected a negative tile x for a buffered feature, got {x}");
+    }
+
+    #[test]
+    fn latitude_is_encoded_in_mercator_not_linearly_across_the_tile() {
+        // 55°N in the z2 tile spanning 0° to 66.5°: linearly that is 83%
+        // of the way up, in Mercator it is 73%, and the difference is nine
+        // degrees on the ground. The screenshot that found it showed the
+        // DNO regions drawing a second Britain off Iceland.
+        let coord = TileCoord::new(2, 1, 1);
+        let bounds = coord.bounds();
+        let tile = decode(&encode(&[point_row("earthquakes", "uk", -3.0, 55.0)], coord, bounds));
+        let g = &tile.layers[0].features[0].geometry;
+        let y = (g[2] >> 1) as i32 ^ -((g[2] & 1) as i32);
+        let merc = |lat: f64| ((lat.to_radians() / 2.0 + std::f64::consts::FRAC_PI_4).tan()).ln();
+        let expected = (merc(bounds.north) - merc(55.0)) / (merc(bounds.north) - merc(bounds.south))
+            * f64::from(EXTENT);
+        assert!((f64::from(y) - expected).abs() < 2.0, "encoded y {y}, Mercator says {expected:.0}");
+        // And the top edge really is the top of the tile.
+        assert_eq!(mercator_bounds(bounds).3, mercator(0.0, bounds.north).1);
     }
 
     #[test]
