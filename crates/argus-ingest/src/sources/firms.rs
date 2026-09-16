@@ -207,10 +207,12 @@ pub fn decode(bytes: &[u8], source_id: &SourceId) -> Result<Vec<Observation>, So
         let Some(at) = date.and_hms_opt(hour, minute, 0) else { continue };
         let at = at.and_utc();
         let satellite = field(c_sat).unwrap_or("?");
+        // The files write the satellite as `N`, `N20` and `N21`; older
+        // documentation says `1` and `2` for the NOAA pair.
         let sat_name = match satellite {
-            "N" => "Suomi NPP",
-            "1" => "NOAA-20",
-            "2" => "NOAA-21",
+            "N" | "NPP" => "Suomi NPP",
+            "N20" | "1" => "NOAA-20",
+            "N21" | "2" => "NOAA-21",
             other => other,
         };
         let confidence = field(c_conf);
@@ -259,7 +261,7 @@ mod tests {
     const CSV: &str = "latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,instrument,confidence,version,bright_ti5,frp,daynight
 62.38906,76.63682,308.3,0.78,0.78,2026-09-16,7,N,VIIRS,n,2.0NRT,278.53,2.07,N
 51.68335,-5.03251,299,0.54,0.51,2026-09-16,156,N,VIIRS,l,2.0NRT,285.95,1.35,N
--3.5,30.2,367.0,0.4,0.4,2026-09-16,1230,1,VIIRS,h,2.0NRT,300.1,45.8,D
+-3.5,30.2,367.0,0.4,0.4,2026-09-16,1230,N20,VIIRS,h,2.0NRT,300.1,45.8,D
 ";
 
     #[test]

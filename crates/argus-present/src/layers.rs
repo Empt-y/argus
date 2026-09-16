@@ -1358,7 +1358,14 @@ pub fn fire<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut 
         _ => ("unknown", ""),
     };
     let daynight = t.str("daynight");
-    let sat = t.str("satellite").unwrap_or("VIIRS").to_string();
+    let sat = match t.str("satellite") {
+        // Rows written before the driver learned the file's own codes.
+        Some("N20") => "NOAA-20".to_string(),
+        Some("N21") => "NOAA-21".to_string(),
+        Some("N") => "Suomi NPP".to_string(),
+        Some(s) => s.to_string(),
+        None => "VIIRS".to_string(),
+    };
     let acquired = t.str("acquired").and_then(when);
     card.title = match (frp, confidence) {
         (Some(f), Some("l")) => format!("Hot spot, {} MW", num(f, 0)),
