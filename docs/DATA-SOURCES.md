@@ -186,6 +186,20 @@ draws as a great-circle path. About 4.4M rows a day, so it has to be filtered
 or aggregated server-side, which the ClickHouse dialect makes easy. Kind
 `event`.
 
+### Bus Open Data Service — done
+`https://data.bus-data.dft.gov.uk/api/v1/datafeed/?api_key=…&boundingBox=minLng,minLat,maxLng,maxLat`
+returns SIRI-VM XML for every bus in the box; free self-serve key. 28,088
+vehicles across England on a weekday morning, 375 operators, TfL's fleet
+included. The bounding box is honest — halves of England summed to within
+two of the whole — but the wire is not compressed: England is 31 MB per
+request, so the driver is `Coverage::Bounded` and the AOIs decide the cost.
+GTFS-RT from the same service is an eighth of the size and was rejected: no
+operator, line or destination, and vehicle ids only unique per operator.
+A quarter of every response is stale — 2,009 of 28,088 over six hours old —
+and is dropped at ten minutes. Kind `vehicle` (new for this, migration
+0008), layer `buses`. Config section `[sources.buses]` — the section name
+must equal the source id for the credential resolver to find the key.
+
 ### NOAA Aviation Weather Center (METAR/TAF) — done
 Built from the bulk cache, not the query API. `api/data/metar?bbox=` thins
 by bounding-box area — 62 for the UK box, 100 for all of Europe, 158 for the
@@ -248,9 +262,6 @@ returned an empty `data` array and its swagger isn't at any standard path.
 
 ## Promising, unverified
 
-- **UK Bus Open Data Service** — 401 without a key; registration is free and
-  self-serve. Live positions for every bus in England. The biggest remaining
-  gap, and one signup from being verifiable.
 - **openAIP** — airspace polygons; free account, 403 seen.
 - **National Highways DATEX II** — 401 "Invalid Subscription Key"; Azure APIM
   free tier, probably self-serve. The old unauthenticated endpoints
@@ -291,7 +302,8 @@ Easiest first, roughly most reusable first:
 3. ~~Storm overflows~~ — done; nine feeds, two schemas.
 4. ~~NDBC buoys~~ — done.
 5. ~~EA flood monitoring~~ — done.
-6. Register for BODS, then build it.
+6. ~~BODS~~ — done; the numbered list is finished. Next candidates are the
+   verified-keyless ones above: Open-Meteo, Elexon, TfL, Argo, SatNOGS.
 
 ## Process notes
 
@@ -333,6 +345,14 @@ Things that have gone wrong more than once, in the order they were learned.
   `maxT24hr_c` is in tenths of a degree; both are only visible next to a
   column that is scaled correctly. Skip a column you cannot reconcile rather
   than publish it under a unit it does not have.
+- A keyed source's config section must be named after its *source id*, not
+  a friendly name: the credential resolver looks up `[sources.<id>]`. The
+  bus driver spent one deploy in `key_required` with a perfectly good key
+  under `[sources.buses]` while its id was `bods-buses`.
+- After fixing a fast clock, cargo will not rebuild anything: the artifacts
+  are stamped an hour in the future and look newer than every edit. A
+  `find target -newermt "$(date)" -exec touch -d '3 hours ago' {} +` is
+  cheaper than `cargo clean`.
 - The machine's own clock is an input. Every station layer read as `delayed`
   by about an hour on the day METARs were built, and the cause was Athena
   running 59 minutes ahead with NTP off, not the feeds. Check `date -u`

@@ -21,7 +21,7 @@ import org.maplibre.android.maps.Style
  * `icon-rotate` from the contact's course, and `icon-rotation-alignment: map`
  * makes that a bearing on the ground rather than an angle on the screen.
  *
- * Shape comes from the entity *kind*, which is a closed enum of seven in
+ * Shape comes from the entity *kind*, which is a closed enum of eight in
  * `argus-core`; colour comes from the *layer*, of which there may be any
  * number. That split is why a new layer needs no app release and a new kind
  * would — and kinds do not appear without a schema change anyway.
@@ -49,12 +49,13 @@ object Sprites {
     }
 
     private enum class Kind {
-        AIRCRAFT, VESSEL, SATELLITE, EVENT, STATION, UNKNOWN;
+        AIRCRAFT, VESSEL, VEHICLE, SATELLITE, EVENT, STATION, UNKNOWN;
 
         companion object {
             fun of(kind: String) = when (kind) {
                 "aircraft" -> AIRCRAFT
                 "vessel" -> VESSEL
+                "vehicle" -> VEHICLE
                 "satellite" -> SATELLITE
                 "event" -> EVENT
                 "station" -> STATION
@@ -98,6 +99,16 @@ object Sprites {
                 moveTo(c, 6f); lineTo(SIZE - 13f, c + 2f)
                 lineTo(SIZE - 15f, SIZE - 8f); lineTo(15f, SIZE - 8f)
                 lineTo(13f, c + 2f); close()
+            }.draw(canvas, fill, rim)
+
+            // An oblong with a blunt nose: a bus seen from above, longer than
+            // it is wide, and directional without being a chevron — a bus on
+            // a road and an aircraft over it must never read as the same
+            // thing at a glance.
+            Kind.VEHICLE -> path {
+                moveTo(c - 5f, 7f); lineTo(c + 5f, 7f)
+                lineTo(c + 7f, 11f); lineTo(c + 7f, SIZE - 8f)
+                lineTo(c - 7f, SIZE - 8f); lineTo(c - 7f, 11f); close()
             }.draw(canvas, fill, rim)
 
             // A ring with a bar through it, for something in orbit rather than

@@ -106,6 +106,15 @@ enabled = true    # NOAA NDBC buoys and coastal stations
 enabled = true    # Aerodrome METARs and TAFs, worldwide, from the AWC bulk cache
 
 # Keyed sources, off until a credential is supplied.
+[sources.buses]
+enabled = true
+# Every local bus in England, from the Bus Open Data Service. Registration is
+# free at https://data.bus-data.dft.gov.uk/ and the key is on the account page.
+# Bounded: it asks about the [[aoi]] boxes, and the whole country is 31 MB of
+# XML per poll, so an AOI that covers England costs what England costs.
+# cadence_secs = 60
+# credentials = { api_key = "" }
+
 [sources.aisstream]
 enabled = false
 # credentials = { api_key = "" }

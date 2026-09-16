@@ -274,6 +274,7 @@ pub fn layer_kinds() -> &'static [EntityKind] {
     &[
         EntityKind::Aircraft,
         EntityKind::Vessel,
+        EntityKind::Vehicle,
         EntityKind::Satellite,
         EntityKind::Event,
         EntityKind::Station,

@@ -154,6 +154,7 @@ pub fn parse_entity_kind(s: &str) -> Option<EntityKind> {
     Some(match s {
         "aircraft" => EntityKind::Aircraft,
         "vessel" => EntityKind::Vessel,
+        "vehicle" => EntityKind::Vehicle,
         "satellite" => EntityKind::Satellite,
         "event" => EntityKind::Event,
         "station" => EntityKind::Station,
@@ -201,6 +202,7 @@ mod tests {
         for k in [
             EntityKind::Aircraft,
             EntityKind::Vessel,
+            EntityKind::Vehicle,
             EntityKind::Satellite,
             EntityKind::Event,
             EntityKind::Station,

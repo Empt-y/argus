@@ -114,6 +114,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // the signal that something is wrong. So the patience is granted where it
     // is needed and nowhere else.
     let patient_http = argus_ingest::HttpClient::new(std::time::Duration::from_secs(120))?;
+    // One more, for the source whose honest answer is bigger than the cap
+    // that protects the rest: the bus feed for all of England is 31 MB and
+    // grows with the fleet. 256 MiB is eight times that, and still finite.
+    let bulk_http = argus_ingest::HttpClient::new(std::time::Duration::from_secs(60))?
+        .with_max_bytes(256 << 20);
     let api_store = store.clone();
     let alert_store = store.clone();
     let runtime = argus_ingest::Runtime::new(
@@ -140,6 +145,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         &http,
         &session_http,
         &patient_http,
+        &bulk_http,
         std::sync::Arc::new(api_store.clone()),
         std::sync::Arc::new(api_store.clone()),
     ) {
@@ -368,6 +374,7 @@ fn build_sources(
     http: &argus_ingest::HttpClient,
     session_http: &argus_ingest::HttpClient,
     patient_http: &argus_ingest::HttpClient,
+    bulk_http: &argus_ingest::HttpClient,
     zone_cache: std::sync::Arc<dyn argus_core::GeometryCache>,
     catalogue: std::sync::Arc<dyn argus_core::TrackedCatalogue>,
 ) -> Vec<std::sync::Arc<dyn argus_core::Source>> {
@@ -575,6 +582,23 @@ fn build_sources(
         sources.push(std::sync::Arc::new(argus_ingest::sources::NdbcBuoys::new(
             http.clone(),
         )));
+    }
+
+    // Buses. Bounded, so the areas of interest decide what it costs: the
+    // whole of England is 31 MB of uncompressed XML per request, and the
+    // driver's documentation has the arithmetic. Its own client because that
+    // response is within a megabyte of the shared client's 32 MiB cap on a
+    // weekday morning, and the cap exists to catch a runaway upstream, not
+    // the largest honest answer in the workspace.
+    if enabled("buses") {
+        let key = config
+            .sources
+            .get("buses")
+            .and_then(|s| s.credentials.get(argus_ingest::sources::bods::API_KEY))
+            .cloned();
+        sources.push(std::sync::Arc::new(
+            argus_ingest::sources::Buses::new(bulk_http.clone()).with_api_key(key),
+        ));
     }
 
     // Storm overflows. Nine water companies, nine separate sources into one

@@ -10,6 +10,7 @@
 export type EntityKind =
   | "aircraft"
   | "vessel"
+  | "vehicle"
   | "satellite"
   | "event"
   | "station"

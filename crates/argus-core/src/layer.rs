@@ -58,6 +58,7 @@ impl LayerStyle {
         let (geometry, color, min_zoom, rotates) = match kind {
             EntityKind::Aircraft => (GeometryClass::Point, "#f2c94c", 4, true),
             EntityKind::Vessel => (GeometryClass::Point, "#56ccf2", 5, true),
+            EntityKind::Vehicle => (GeometryClass::Point, "#f2994a", 8, true),
             EntityKind::Satellite => (GeometryClass::Point, "#bb6bd9", 0, false),
             EntityKind::Event => (GeometryClass::Mixed, "#eb5757", 0, false),
             EntityKind::Station => (GeometryClass::Point, "#6fcf97", 6, false),
@@ -154,6 +155,16 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#90caf9".into();
         s.min_zoom = 4;
     }),
+    ("buses", |s| {
+        // Twenty-eight thousand on a weekday, dense along every high street,
+        // so not below z8 — "where is my bus" is asked of a town, and a
+        // county of them is a smear. Orange, the colour of nothing else that
+        // moves here: aircraft are yellow, vessels blue, and a bus must read
+        // as neither at a glance.
+        s.color = "#f2994a".into();
+        s.min_zoom = 8;
+        s.max_zoom = 16;
+    }),
     ("storm-overflows", |s| {
         // Brown, and the one layer here where that is a description rather than
         // a palette choice. Visible from z5 because the question is regional —
@@ -182,6 +193,7 @@ mod tests {
         for kind in [
             EntityKind::Aircraft,
             EntityKind::Vessel,
+            EntityKind::Vehicle,
             EntityKind::Satellite,
             EntityKind::Event,
             EntityKind::Station,

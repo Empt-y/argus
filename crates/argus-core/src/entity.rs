@@ -20,6 +20,11 @@ pub enum EntityKind {
     Aircraft,
     /// Surface and subsurface vessels.
     Vessel,
+    /// Anything on a road or a rail: a bus, a train, a tram. Reports a
+    /// position and a heading the way an aircraft does, and goes stale the
+    /// way an aircraft does — a bus that has not reported for a quarter of an
+    /// hour is in a depot, not at the last stop the feed listed.
+    Vehicle,
     /// Orbiting objects propagated from element sets.
     Satellite,
     /// A thing that *happened* at a place and time: a quake, a fire detection,
@@ -43,6 +48,7 @@ impl EntityKind {
         match self {
             Self::Aircraft => "aircraft",
             Self::Vessel => "vessel",
+            Self::Vehicle => "vehicle",
             Self::Satellite => "satellite",
             Self::Event => "event",
             Self::Station => "station",
@@ -73,9 +79,10 @@ impl EntityKind {
 
     /// Every kind, so that anything deriving a table from this enum cannot
     /// silently omit one.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Aircraft,
         Self::Vessel,
+        Self::Vehicle,
         Self::Satellite,
         Self::Event,
         Self::Station,
@@ -115,6 +122,10 @@ impl EntityKind {
             // AIS is far sparser — a satellite-relayed vessel report can be
             // hours apart with nothing wrong. Six hours.
             Self::Vessel => 6 * 60,
+            // A bus reports every thirty seconds or so while in service, and
+            // the feed keeps listing it for a day after it stops. Fifteen
+            // minutes, as for aircraft: past that it has parked.
+            Self::Vehicle => 15,
             // Propagated from elements every poll, so a gap means propagation
             // stopped, which is exactly when the map should stop claiming to
             // know where they are.
