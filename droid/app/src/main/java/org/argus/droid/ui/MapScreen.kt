@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.argus.droid.ArgusViewModel
+import org.argus.droid.OverlayView
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
@@ -81,6 +82,7 @@ fun WorldTab(
             // second endpoint and no hard-coded list — the same arrangement
             // that lets a new layer reach the phone without an app release.
             vm.noteBasemapsOffered(basemapsFrom(newStyle.json))
+            vm.noteOverlaysOffered(overlaysFrom(newStyle.json))
             // Images first: a symbol layer whose icon is not registered draws
             // nothing at all, so the glyphs have to exist before the style is
             // handed on to anything that might render it.
@@ -105,6 +107,15 @@ fun WorldTab(
         val current = style ?: return@LaunchedEffect
         state.layers.forEach { layer ->
             current.setLayerVisible(layer.id, layer.id !in state.hidden)
+        }
+    }
+
+    // Overlays are hidden in the style as served; the user's choices are
+    // re-applied to every new style, which a rewind produces.
+    LaunchedEffect(style, state.overlaysOn, state.overlays) {
+        val current = style ?: return@LaunchedEffect
+        state.overlays.forEach { overlay ->
+            current.setLayerVisible(overlay.layer, overlay.layer in state.overlaysOn)
         }
     }
 
@@ -165,6 +176,9 @@ fun WorldTab(
             hidden = state.hidden,
             live = state.live,
             onToggle = vm::toggleLayer,
+            overlays = state.overlays,
+            overlaysOn = state.overlaysOn,
+            onToggleOverlay = vm::toggleOverlay,
             modifier = Modifier.align(Alignment.TopEnd).padding(top = 12.dp, end = 12.dp),
         )
 
@@ -205,4 +219,21 @@ private fun basemapsFrom(styleJson: String): List<String> = runCatching {
         ?: return emptyList()
     val names = metadata.optJSONArray("argus:basemaps") ?: return emptyList()
     (0 until names.length()).mapNotNull { names.optString(it).takeIf(String::isNotBlank) }
+}.getOrDefault(emptyList())
+
+/** The imagery overlays a style document carries, from its metadata. */
+private fun overlaysFrom(styleJson: String): List<OverlayView> = runCatching {
+    val metadata = org.json.JSONObject(styleJson).optJSONObject("metadata")
+        ?: return emptyList()
+    val list = metadata.optJSONArray("argus:overlays") ?: return emptyList()
+    (0 until list.length()).mapNotNull { i ->
+        val o = list.optJSONObject(i) ?: return@mapNotNull null
+        val layer = o.optString("layer").takeIf(String::isNotBlank) ?: return@mapNotNull null
+        OverlayView(
+            layer = layer,
+            name = o.optString("name", layer),
+            description = o.optString("description"),
+            date = o.optString("date"),
+        )
+    }
 }.getOrDefault(emptyList())

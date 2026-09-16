@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import org.argus.droid.Connection
 import org.argus.droid.DVR_WINDOW_HOURS
 import org.argus.droid.UiState
+import org.argus.droid.OverlayView
 import org.argus.droid.net.LayerView
 import java.time.Instant
 import java.time.ZoneId
@@ -129,9 +130,12 @@ fun LayerRail(
     hidden: Set<String>,
     live: Boolean,
     onToggle: (String) -> Unit,
+    overlays: List<OverlayView> = emptyList(),
+    overlaysOn: Set<String> = emptySet(),
+    onToggleOverlay: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    if (layers.isEmpty()) return
+    if (layers.isEmpty() && overlays.isEmpty()) return
     Panel(modifier = modifier.widthIn(max = 210.dp)) {
         Column(
             modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -173,6 +177,46 @@ fun LayerRail(
                             style = MaterialTheme.typography.labelSmall,
                             maxLines = 1,
                         )
+                    }
+                }
+            }
+            if (overlays.isNotEmpty()) {
+                // Imagery is not a feed of contacts and does not get a count;
+                // it gets the day it is for, because that is the honest
+                // caption on a satellite picture.
+                Text(
+                    text = "IMAGERY",
+                    color = Color(0x99FFFFFF),
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                overlays.forEach { overlay ->
+                    val on = overlay.layer in overlaysOn
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable { onToggleOverlay(overlay.layer) },
+                    ) {
+                        Box(
+                            Modifier
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFC5D9F1).copy(alpha = if (on) 1f else 0.25f))
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = overlay.name,
+                                color = if (on) Color.White else Color(0x66FFFFFF),
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 2,
+                            )
+                            Text(
+                                text = overlay.date,
+                                color = Color(0x99FFFFFF).copy(alpha = if (on) 1f else 0.5f),
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
             }

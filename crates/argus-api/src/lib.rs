@@ -147,6 +147,7 @@ pub fn router(state: ApiState) -> Router {
     let protected = Router::new()
         .route("/v1/sources", get(routes::catalog::sources))
         .route("/v1/layers", get(routes::catalog::layers))
+        .route("/v1/overlays", get(routes::overlays::overlays))
         .route("/v1/client-keys", get(routes::catalog::client_keys))
         .route("/v1/entities", get(routes::entities::list))
         .route("/v1/entities/{kind}/{key}", get(routes::entities::detail))

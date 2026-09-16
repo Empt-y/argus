@@ -241,6 +241,39 @@ pub async fn style(
         }));
     }
 
+    // Imagery overlays go between the ground and the contacts, hidden
+    // until a client turns one on: MapLibre draws a `visibility: none`
+    // raster layer for free and fetches nothing for it. Dated by the same
+    // instant the contacts are, so a rewound style shows that day's Earth.
+    let overlays = if query.basemap_only { Vec::new() } else { super::overlays::overlays_for(super::overlays::day_for(at)) };
+    for overlay in &overlays {
+        let source = format!("overlay:{}", overlay.id);
+        sources.insert(
+            source.clone(),
+            json!({
+                "type": "raster",
+                "tiles": [overlay.tiles],
+                "tileSize": overlay.tile_size,
+                "minzoom": overlay.min_zoom,
+                "maxzoom": overlay.max_zoom,
+                "attribution": overlay.attribution["notice"],
+            }),
+        );
+        style_layers.push(json!({
+            "id": source,
+            "type": "raster",
+            "source": source,
+            "layout": { "visibility": "none" },
+            "paint": { "raster-opacity": overlay.opacity },
+            "metadata": {
+                "argus:overlay": true,
+                "argus:name": overlay.name,
+                "argus:description": overlay.description,
+                "argus:date": overlay.date,
+            },
+        }));
+    }
+
     for row in rows {
         if query.basemap_only {
             break;
@@ -393,6 +426,9 @@ pub async fn style(
                 // reasoning that puts the layer catalogue on the server.
                 "argus:basemaps": state.config.basemaps.keys().collect::<Vec<_>>(),
                 "argus:basemap": query.basemap,
+                // The overlays in the style, by layer id, so a client can
+                // offer them without walking the layer list for metadata.
+                "argus:overlays": overlays.iter().map(|o| json!({"layer": format!("overlay:{}", o.id), "name": o.name, "description": o.description, "date": o.date})).collect::<Vec<_>>(),
             },
             "sources": sources,
             "layers": style_layers,

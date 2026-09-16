@@ -13,6 +13,7 @@ import type {
   Entity,
   Health,
   Layer,
+  OverlaysResponse,
   Source,
   TrackResponse,
 } from "./types.ts";
@@ -85,6 +86,11 @@ export const api = {
     request<{ sources: Source[] }>("/v1/sources").then((r) => r.sources),
 
   clientKeys: () => request<ClientKeys>("/v1/client-keys"),
+
+  overlays: (at?: Date | null) =>
+    request<OverlaysResponse>(
+      `/v1/overlays${at ? `?at=${encodeURIComponent(at.toISOString())}` : ""}`,
+    ),
 
   entities: (view: Viewport) =>
     request<EntitiesResponse>(`/v1/entities?${viewportParams(view)}`),

@@ -203,3 +203,28 @@ export type ServerFrame =
 export function entityId(e: Pick<Entity, "entity_kind" | "entity_key">): string {
   return `${e.entity_kind}:${e.entity_key}`;
 }
+
+/**
+ * A raster product a client can drape over the globe — satellite imagery,
+ * night lights, sea temperature — from `/v1/overlays`. Nothing is stored
+ * for these; the server resolves the day and the template, the client
+ * fetches the tiles from NASA directly.
+ */
+export interface Overlay {
+  id: string;
+  name: string;
+  description: string;
+  /** XYZ template with `{z}`, `{x}`, `{y}`; the date is already in it. */
+  tiles: string;
+  date: string;
+  min_zoom: number;
+  max_zoom: number;
+  tile_size: number;
+  opacity: number;
+  attribution: { provider: string; url: string; license: string; notice: string };
+}
+
+export interface OverlaysResponse {
+  date: string;
+  overlays: Overlay[];
+}

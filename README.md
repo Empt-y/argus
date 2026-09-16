@@ -101,6 +101,12 @@ altitude is never stored without saying what it was measured from — mixing
 pressure altitude with geometric height is how aircraft end up under the
 terrain, and it is not a bug you can find by reading the display code.
 
+Satellite imagery is not ingested: `GET /v1/overlays` catalogues NASA GIBS
+rasters (MODIS and VIIRS true colour, VIIRS night lights, sea surface
+temperature, aerosol) with the day resolved to the DVR instant, and the style
+document carries them hidden, so a rewound map shows that day's Earth under
+that day's contacts.
+
 Layers are discovered from the running drivers and described by
 `GET /v1/layers`, so a new driver appears in both clients without a client
 release.
@@ -231,7 +237,7 @@ that has been checked, what it actually returns, and what went wrong.
 | 4 | Web client | done |
 | 5 | Android client | done |
 | 6 | Alerts, geofences, Tailscale | done |
-| 7 | Earth observation: imagery, fires, nightlights | fires done |
+| 7 | Earth observation: imagery, fires, nightlights | done: fires, and GIBS imagery/night lights/SST/aerosol as DVR-dated overlays |
 | 8 | Infrastructure and internet: grid, cables, BGP | grid and cables done |
 | 9 | Conflict and news | |
 | 10 | Self-collected: SDR, phone-as-sensor | |

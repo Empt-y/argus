@@ -19,6 +19,7 @@ import { ARGUS_BASE, deviceToken } from "./config.ts";
 import type { ClientKeys, Entity, Layer } from "./net/types.ts";
 import { Hud } from "./ui/hud.ts";
 import { EntityCard } from "./ui/card.ts";
+import { Overlays } from "./layers/overlays.ts";
 import { SensorStyles } from "./styles/sensors.ts";
 import { ScreenSpaceEventHandler, ScreenSpaceEventType } from "cesium";
 
@@ -113,6 +114,40 @@ async function main(): Promise<void> {
   );
   const sensors = new SensorStyles(viewer);
   hud.setSensorStyles(sensors);
+
+  // Satellite imagery and the other rasters: catalogued by the server,
+  // dated by the DVR, drawn here. One toggle each in the scene rail.
+  const overlays = new Overlays(viewer);
+  // The day the overlays were last asked for, "" when live, so a scrub
+  // within the same day or a layer toggle does not re-fetch them.
+  let overlayKey: string | null = null;
+  const dayKey = () => hud.dvrInstant()?.toISOString().slice(0, 10) ?? "";
+  const refreshOverlays = async () => {
+    const key = dayKey();
+    try {
+      const { date, overlays: list } = await api.overlays(hud.dvrInstant());
+      const first = overlays.catalogue().length === 0;
+      overlays.update(date, list);
+      if (first) {
+        for (const o of list) {
+          hud.addSceneToggle(
+            o.name,
+            false,
+            (on) => overlays.setEnabled(o.id, on),
+            `${o.description} Dated ${date}; follows the DVR.`,
+          );
+        }
+        hud.addAttribution(list[0]?.attribution.provider ?? "NASA GIBS");
+      }
+      overlayKey = key;
+    } catch {
+      /* the overlays are a luxury; the map is fine without them */
+    }
+  };
+  void refreshOverlays();
+  hud.onSelectionChange(() => {
+    if (dayKey() !== overlayKey) void refreshOverlays();
+  });
 
   // Labels are decided in screen space, so they can only be decided once the
   // camera is where it is going to be for this frame. `preRender` fires once

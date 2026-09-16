@@ -64,6 +64,15 @@ data class Selection(
     val error: String? = null,
 )
 
+/** A raster overlay the style document offers: satellite imagery, night
+ *  lights, sea temperature. The server dates it to the DVR instant. */
+data class OverlayView(
+    val layer: String,
+    val name: String,
+    val description: String,
+    val date: String,
+)
+
 data class UiState(
     val baseUrl: String = Settings.EMULATOR_HOST,
     val paired: Boolean = false,
@@ -88,6 +97,10 @@ data class UiState(
     /** The basemap in use, and the names the server says it offers. */
     val basemap: String? = null,
     val basemapsOffered: List<String> = emptyList(),
+    /** Imagery overlays the style carries, and the ones switched on. Off by
+     *  default: a hidden raster layer costs MapLibre nothing. */
+    val overlays: List<OverlayView> = emptyList(),
+    val overlaysOn: Set<String> = emptySet(),
     /** A place the map has been asked to go, and a token so the same
      *  coordinates asked for twice still move it the second time. */
     val focus: Pair<Double, Double>? = null,
@@ -292,6 +305,18 @@ class ArgusViewModel(app: Application) : AndroidViewModel(app) {
     /** What the style document said it could offer, learnt when it loaded. */
     fun noteBasemapsOffered(names: List<String>) {
         _state.update { if (it.basemapsOffered == names) it else it.copy(basemapsOffered = names) }
+    }
+
+    fun noteOverlaysOffered(overlays: List<OverlayView>) {
+        _state.update { if (it.overlays == overlays) it else it.copy(overlays = overlays) }
+    }
+
+    fun toggleOverlay(layer: String) {
+        _state.update {
+            val on = it.overlaysOn.toMutableSet()
+            if (!on.add(layer)) on.remove(layer)
+            it.copy(overlaysOn = on)
+        }
     }
 
     fun toggleLayer(layerId: String) {

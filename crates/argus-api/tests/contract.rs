@@ -1284,3 +1284,45 @@ fn tile_for(lon: f64, lat: f64, z: u8) -> (u8, u32, u32) {
         .floor() as u32;
     (z, x, y)
 }
+
+/// The imagery overlays ride in the style hidden, between the ground and
+/// the contacts, and stand alone at `/v1/overlays` dated by the DVR.
+#[tokio::test]
+async fn overlays_are_in_the_style_hidden_and_dated_like_the_contacts() {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    let (status, body) = get(&state, "/v1/overlays", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&body);
+    let overlays = body["overlays"].as_array().unwrap();
+    assert!(overlays.iter().any(|o| o["id"] == "night-lights"), "{body:#}");
+    let yesterday = (chrono::Utc::now() - chrono::Duration::days(1)).date_naive().to_string();
+    assert_eq!(body["date"], yesterday);
+
+    let (status, body) = get(&state, "/v1/overlays?at=2026-09-08T14:00:00Z", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&body);
+    assert_eq!(body["date"], "2026-09-08");
+    assert!(body["overlays"][0]["tiles"].as_str().unwrap().contains("/2026-09-08/"));
+
+    let (status, body) = get(&state, "/v1/style.json?at=2026-09-08T14:00:00Z", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    let style = json(&body);
+    let layers = style["layers"].as_array().unwrap();
+    let ids: Vec<&str> = layers.iter().map(|l| l["id"].as_str().unwrap()).collect();
+    let night = ids.iter().position(|id| *id == "overlay:night-lights").expect("the overlay layer");
+    let basemap = ids.iter().position(|id| *id == "basemap");
+    let first_contact = ids.iter().position(|id| id.starts_with("flights")).expect("a contact layer");
+    if let Some(b) = basemap {
+        assert!(b < night, "ground first");
+    }
+    assert!(night < first_contact, "overlays under the contacts");
+    assert_eq!(layers[night]["layout"]["visibility"], "none", "hidden until asked for");
+    assert!(style["sources"]["overlay:night-lights"]["tiles"][0].as_str().unwrap().contains("/2026-09-08/"));
+    assert!(style["metadata"]["argus:overlays"].as_array().unwrap().iter().any(|o| o["layer"] == "overlay:night-lights"));
+
+    // The ground-only style an offline region is cut from carries none.
+    let (_, body) = get(&state, "/v1/style.json?basemap_only=true", LOOPBACK).await;
+    assert!(json(&body)["sources"].get("overlay:night-lights").is_none());
+}

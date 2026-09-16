@@ -34,7 +34,7 @@ export class Hud {
   #renderer: LayerRenderer | null = null;
   #layers: Layer[] = [];
   #minutesBack = 0;
-  #onChange: (() => void) | null = null;
+  #onChange: (() => void)[] = [];
 
   constructor(root: HTMLElement) {
     root.innerHTML = `
@@ -75,11 +75,17 @@ export class Hud {
     });
     // Re-query on release rather than on every pixel of the drag: each change
     // is a full viewport query against the rollup.
-    this.#scrubber.addEventListener("change", () => this.#onChange?.());
+    this.#scrubber.addEventListener("change", () => this.#changed());
   }
 
+  /** Called when the layer selection or the DVR instant changes. More than
+   *  one listener may care: the stream resubscribes, the imagery re-dates. */
   onSelectionChange(handler: () => void): void {
-    this.#onChange = handler;
+    this.#onChange.push(handler);
+  }
+
+  #changed(): void {
+    for (const handler of this.#onChange) handler();
   }
 
   /** Wire the sensor-look selector once the scene exists to apply it to. */
@@ -262,7 +268,7 @@ export class Hud {
           else this.#enabled.add(layer.id);
           renderer?.setLayerVisible(layer.id, this.#enabled.has(layer.id));
           this.#renderLayers();
-          this.#onChange?.();
+          this.#changed();
         });
         return row;
       }),

@@ -443,6 +443,17 @@ mirror at `davidmegginson.github.io` and raw GitHub both work. Public domain.
 Kind `feature`, weekly, key `airport:{ident}`; 10,508 carry an ICAO code,
 the join to `metars`. Closed airfields (13,524) are kept and marked.
 
+### NASA GIBS imagery overlays — done (not ingested)
+`gibs.earthdata.nasa.gov/wmts/epsg3857/best/{layer}/default/{YYYY-MM-DD}/{TileMatrixSet}/{z}/{y}/{x}.{jpg|png}`,
+keyless, public domain, CORS on. Served as a catalogue at `/v1/overlays` and as
+hidden raster layers in the style document, dated to the DVR instant and never
+later than yesterday (today's product is still being assembled). Built:
+`MODIS_Terra_CorrectedReflectance_TrueColor` (Level9), `VIIRS_SNPP_CorrectedReflectance_TrueColor`
+(Level9), `VIIRS_SNPP_DayNightBand_At_Sensor_Radiance` (Level8),
+`GHRSST_L4_MUR_Sea_Surface_Temperature` (Level7), `MODIS_Terra_Aerosol_Optical_Depth_3km`
+(Level6). `VIIRS_Black_Marble` and `VIIRS_SNPP_Thermal_Anomalies_375m_All` 404
+on this endpoint. Note the WMTS path order is `{z}/{y}/{x}`.
+
 ### Others, verified keyless
 - **TfL Unified API** — keyless line status and bus arrivals with vehicle
   registrations; road disruptions are built (below). BODS carries TfL's bus
