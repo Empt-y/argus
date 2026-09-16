@@ -338,7 +338,7 @@ mod tests {
         let e: Envelope = serde_json::from_str(GAUGES).unwrap();
         let c = cells(&e.items);
         let answers: Vec<Answer> = serde_json::from_str(r#"[
-          {"latitude":51.425003,"longitude":-0.32499695,"daily":{"time":["2026-09-10","2026-09-11","2026-09-12","2026-09-13","2026-09-14","2026-09-15","2026-09-16"],"river_discharge":[3.14,1.67,0.80,0.53,0.42,0.76,0.34]}},
+          {"latitude":51.425003,"longitude":-0.32499695,"daily":{"time":["2026-09-10","2026-09-11","2026-09-12","2026-09-13","2026-09-14","2026-09-15","2026-09-16"],"river_discharge":[3.12,1.67,0.80,0.53,0.42,0.76,0.34]}},
           {"latitude":54.025,"longitude":-2.025,"daily":{"time":["2026-09-16"],"river_discharge":[null]}}
         ]"#).unwrap();
         let now: DateTime<Utc> = "2026-09-16T12:00:00Z".parse().unwrap();
@@ -350,8 +350,8 @@ mod tests {
         assert_eq!(o.quality, Quality::Modeled);
         assert_eq!(o.observed_at, "2026-09-16T00:00:00Z".parse::<DateTime<Utc>>().unwrap());
         assert_eq!(o.attrs["discharge_m3s"], 0.34);
-        assert_eq!(o.attrs["discharge_week_ago_m3s"], 3.14);
-        assert_eq!(o.attrs["discharge_7d_peak_m3s"], 3.14);
+        assert_eq!(o.attrs["discharge_week_ago_m3s"], 3.12);
+        assert_eq!(o.attrs["discharge_7d_peak_m3s"], 3.12);
         assert_eq!(o.label.as_deref(), Some("River Thames at Kingston upon Thames: 0.3 m³/s"));
     }
 }
