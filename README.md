@@ -34,7 +34,8 @@ US weather alerts (NWS), aviation SIGMETs and aerodrome METARs with their
 TAFs, radiosondes (SondeHub), every bus in England (Bus Open Data Service),
 UK storm overflows (nine water companies), Environment Agency flood warnings
 and river gauges, NOAA NDBC buoys, the Argo float array, every meteor the Global Meteor Network
-triangulates, and the SatNOGS ground stations with what each is hearing.
+triangulates, the SatNOGS ground stations with what each is hearing, and TfL's road
+disruptions across London.
 
 Not built yet: satellite imagery and fire detections, infrastructure layers
 (power grid, cables, BGP), SDR receivers, phone-as-sensor, the AR sky view.

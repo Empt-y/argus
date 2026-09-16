@@ -575,6 +575,14 @@ fn build_sources(
         ));
     }
 
+    // TfL: disruptions on London's red routes, dated by their last update
+    // so a month of roadworks stays on the map while TfL keeps touching it.
+    if enabled("road-disruptions") {
+        sources.push(std::sync::Arc::new(
+            argus_ingest::sources::TflRoadDisruptions::new(http.clone()),
+        ));
+    }
+
     // SatNOGS: the amateur satellite ground station network and what each
     // station is listening to, which joins to the satellites layer by NORAD
     // number.

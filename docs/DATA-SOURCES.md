@@ -34,6 +34,7 @@ Entity kinds refer to `argus_core::EntityKind`.
 | `argo-floats` | `argo.rs` | Argo profiling floats, latest surfacing |
 | `meteors` | `gmn.rs` | Global Meteor Network trajectories |
 | `ground-stations` | `satnogs.rs` | SatNOGS stations and what each is listening to |
+| `road-disruptions` | `tfl.rs` | TfL road disruptions, Greater London |
 
 Notes on the ones that had something to teach follow.
 
@@ -191,6 +192,15 @@ draws as a great-circle path. About 4.4M rows a day, so it has to be filtered
 or aggregated server-side, which the ClickHouse dialect makes easy. Kind
 `event`.
 
+### TfL road disruptions — done
+`api.tfl.gov.uk/Road/all/Disruption`, keyless, 131 records in 314 KB. Each
+has `point` as a JSON array *inside a string* (`"[0.054,51.471]"`) and a
+GeoJSON `geography` Point; 32 also carry a `geometry` polygon of the affected
+area. Dated by `lastModifiedTime` — TfL touches every active record daily —
+because works run for weeks and the event horizon is seven days. Ended ones
+dropped; planned ones (start in the future) kept and flagged. Kind `event`,
+layer `road-disruptions`, coverage fixed to Greater London.
+
 ### SatNOGS — done
 `network.satnogs.org/api/stations/` is 4,470 stations in one 3.4 MB
 request, no paging. `api/observations/?start=&end=` pages 25 at a time by a
@@ -272,9 +282,9 @@ returned an empty `data` array and its swagger isn't at any standard path.
 - **data.police.uk** — street-level crime, OGL v3. Monthly, ~2 month lag,
   locations snapped to anonymised points; the UI needs to say both or it reads
   as precise. Kind `event`.
-- **TfL Unified API** — keyless line status, road disruptions (107 live), and
-  bus arrivals with vehicle registrations, which becomes a track if polled by
-  `vehicleId`. Greater London only.
+- **TfL Unified API** — keyless line status and bus arrivals with vehicle
+  registrations; road disruptions are built (below). BODS carries TfL's bus
+  positions already, so the arrivals route is moot.
 - **EMODnet Human Activities WFS** — offshore platforms and wind farms with
   operator, status, capacity. Kind `feature`, European.
 - **FDSN station metadata** — Raspberry Shake (1,566 UK station-epochs) and
@@ -342,8 +352,9 @@ Easiest first, roughly most reusable first:
 7. ~~Argo floats~~ — done.
 8. ~~Global Meteor Network~~ — done.
 9. ~~SatNOGS~~ — done.
-10. Next candidates from the keyless list: TfL road disruptions,
-    Elexon/carbon intensity, Open-Meteo, EMODnet, FDSN, data.police.uk.
+10. ~~TfL road disruptions~~ — done.
+11. Next candidates from the keyless list: Elexon/carbon intensity (needs
+    DNO region polygons), Open-Meteo, EMODnet, FDSN, data.police.uk.
 
 ## Process notes
 

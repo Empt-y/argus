@@ -138,6 +138,12 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#56ccf2".into();
         s.min_zoom = 7;
     }),
+    ("road-disruptions", |s| {
+        // Points with an area on a quarter of them, so Mixed stays; London
+        // only, so nothing to see below z8. Amber, the colour of a road sign.
+        s.color = "#f5a623".into();
+        s.min_zoom = 8;
+    }),
     ("ground-stations", |s| {
         // Four and a half thousand worldwide, most of them dark, so from
         // z3 — the question is where the network can hear from, asked of a

@@ -111,6 +111,9 @@ enabled = true    # Global Meteor Network trajectories, a week on first start
 [sources.ground-stations]
 enabled = true    # SatNOGS ground stations and what each is listening to
 
+[sources.road-disruptions]
+enabled = true    # Transport for London road disruptions, Greater London
+
 [sources.metars]
 enabled = true    # Aerodrome METARs and TAFs, worldwide, from the AWC bulk cache
 
