@@ -16,7 +16,7 @@ this box, and where did it reappear".
 This is a personal project and it is early, but it works end to end. As of
 September 2026:
 
-- A Rust daemon (`argusd`) polls 39 upstream feeds into 36 layers, with
+- A Rust daemon (`argusd`) polls 40 upstream feeds into 37 layers, with
   provider failover chains, per-provider budgets and a disk budget.
 - Postgres/PostGIS/TimescaleDB store with raw observations rolled up into
   tracks and daily summaries.
@@ -53,7 +53,8 @@ BGP visibility, active probing, darknet — drawn on the country, region or
 network's registered country it belongs to, and every BGP hijack, leak and
 look-alike GRIP flags, at the place the prefix lives, and the BGP update
 rate at each of RIPE's two dozen route collectors, from the RIS Live
-stream held open in the background.
+stream held open in the background, and the seventeen thousand RIPE Atlas
+probes with whether each is connected.
 
 Not built yet: satellite imagery and fire detections, infrastructure layers
 (power grid, cables, BGP), SDR receivers, phone-as-sensor, the AR sky view.
@@ -185,6 +186,7 @@ steady-state figures from a weekday, before any TimescaleDB compression.
 | `fires` | ~0.2 M | ~0.1 GB | 200,000 VIIRS detections a day worldwide, each written once |
 | `hf-propagation` | ~1 M | ~0.4 GB | 7,000 beacon paths touching the AOIs every ten minutes, each a great circle |
 | `street-crime` | ~0.2 M | ~0.1 GB | half a million crimes a month across England and Wales, rewritten every three days |
+| `internet-probes` | ~0.8 M | ~0.35 GB | 17,000 RIPE Atlas probes dated by poll time, every 30 min |
 | `argo-floats` | ~0.1 M | ~50 MB | 4,300 floats dated by poll time, hourly |
 | `seismographs` | < 0.1 M | ~10 MB | 6,200 stations dated by poll time, six-hourly |
 | `bgp-churn` | < 0.1 M | ~15 MB | 23 RIS collectors, one rate each per minute |

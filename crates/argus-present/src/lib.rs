@@ -121,6 +121,7 @@ pub fn card(subject: Subject<'_>) -> Card {
         "internet-outages" => layers::internet_outage(subject, attrs, &mut used),
         "bgp-incidents" => layers::bgp_incident(subject, attrs, &mut used),
         "bgp-churn" => layers::bgp_churn(subject, attrs, &mut used),
+        "internet-probes" => layers::atlas_probe(subject, attrs, &mut used),
         "river-discharge" => layers::river_discharge(subject, attrs, &mut used),
         "hf-propagation" => layers::hf_path(subject, attrs, &mut used),
         _ => generic::card(subject, attrs, &mut used),

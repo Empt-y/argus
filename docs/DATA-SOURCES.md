@@ -530,6 +530,17 @@ fails the poll. Kind `measure`, every minute, key `ris:rrc01`. Frames are
 parsed by `serde_json` into a struct of the five fields the tally needs;
 CPU cost noted in the commit message that landed it.
 
+### RIPE Atlas probes — done
+`atlas.ripe.net/api/v2/probes/?page_size=500&status__in=1,2` (`status=1,2`
+is a 400: "not one of the available choices"); the cursor is `next` in the
+body. 17,238 connected or disconnected probes in 35 pages (60,650 in all —
+the rest abandoned or never connected); 1,067 anchors; 14 with null
+`geometry`; 287 with no `asn_v4`; 6,589 with an empty description; a dozen
+tags each. Kind `station` on the fixture pattern (dated by poll,
+`status_since`/`last_connected` as attrs, disconnected = `stale`), every 30
+min because 17k rows a poll add up; key `atlas:{id}`. Addresses are not
+stored, the AS and prefix are.
+
 ### NASA GIBS imagery overlays — done (not ingested)
 `gibs.earthdata.nasa.gov/wmts/epsg3857/best/{layer}/default/{YYYY-MM-DD}/{TileMatrixSet}/{z}/{y}/{x}.{jpg|png}`,
 keyless, public domain, CORS on. Served as a catalogue at `/v1/overlays` and as
@@ -630,9 +641,9 @@ Easiest first, roughly most reusable first:
     The keyless list is empty.
 20. Phase 8, the internet — the geolocation step is RIPEstat (`geoloc` for
     a prefix, `rir-stats-country` for an AS): ~~IODA outages~~ — done,
-    ~~GRIP hijacks~~ — done, ~~RIS Live churn per collector~~ — done.
-    Then RIPE Atlas probes, PeeringDB exchanges and facilities, root-server
-    sites.
+    ~~GRIP hijacks~~ — done, ~~RIS Live churn per collector~~ — done,
+    ~~RIPE Atlas probes~~ — done. Then PeeringDB exchanges and facilities,
+    root-server sites.
 
 ## Process notes
 

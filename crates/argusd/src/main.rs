@@ -723,6 +723,13 @@ fn build_sources(
     if enabled("bgp-churn") {
         sources.push(std::sync::Arc::new(argus_ingest::sources::RisLive::new()));
     }
+    // RIPE Atlas probes: seventeen thousand vantage points with a
+    // connection state each, every half hour.
+    if enabled("internet-probes") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::AtlasProbes::new(
+            patient_http.clone(),
+        )));
+    }
 
     // Fires (Phase 7): every VIIRS detection of the last day, worldwide,
     // every half hour. Keyed: the FIRMS MAP_KEY, which is not the

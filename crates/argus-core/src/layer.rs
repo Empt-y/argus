@@ -306,6 +306,14 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#9c8cff".into();
         s.min_zoom = 0;
     }),
+    ("internet-probes", |s| {
+        // Seventeen thousand probes, most in someone's home. From z4 like
+        // the ground stations, so the world view is not a smear. A soft
+        // blue-grey; a disconnected one is drawn stale by the client.
+        s.geometry = GeometryClass::Point;
+        s.color = "#8fb3d9".into();
+        s.min_zoom = 4;
+    }),
     ("ground-stations", |s| {
         // Four and a half thousand worldwide, most of them dark, so from
         // z3 — the question is where the network can hear from, asked of a

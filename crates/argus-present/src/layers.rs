@@ -2118,6 +2118,87 @@ pub fn bgp_churn<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: 
     card
 }
 
+// --- RIPE Atlas probes -------------------------------------------------------------
+
+pub fn atlas_probe<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let anchor = t.bool("anchor") == Some(true);
+    let mut card = base(subject, if anchor { "RIPE Atlas anchor" } else { "RIPE Atlas probe" });
+    let id = t.i64("probe_id");
+    let status = t.str("status").unwrap_or("").to_string();
+    let since = t.str("status_since").and_then(when);
+    let asn = t.i64("asn_v4").or_else(|| t.i64("asn_v6"));
+    let country = t.str("country").map(str::to_string);
+    let description = t.str("description").map(str::to_string);
+    let tags = t.strings("tags");
+    card.title = match (&description, id) {
+        (Some(d), Some(i)) => format!("{d} (#{i})"),
+        (Some(d), None) => d.clone(),
+        (None, Some(i)) => format!("{} #{i}", if anchor { "Anchor" } else { "Probe" }),
+        (None, None) => subject.key.to_string(),
+    };
+    let mut summary = format!("{} {}", if anchor { "An anchor" } else { "A probe" }, status);
+    if let Some(s) = &since {
+        summary.push_str(&format!(" since {s}"));
+    }
+    if let Some(a) = asn {
+        summary.push_str(&format!(", in AS{a}"));
+    }
+    if let Some(c) = &country {
+        summary.push_str(&format!(" ({c})"));
+    }
+    summary.push('.');
+    // The tags that say what kind of connection this is, in words; the
+    // firmware and capability tags stay in the row.
+    let telling: Vec<&str> = tags
+        .iter()
+        .filter_map(|s| match s.as_str() {
+            "home" => Some("at home"),
+            "office" => Some("in an office"),
+            "datacentre" => Some("in a data centre"),
+            "core" => Some("in a core network"),
+            "ixp" => Some("at an exchange"),
+            "nat" => Some("behind NAT"),
+            "no-nat" => Some("on a public address"),
+            "native-ipv6" => Some("native IPv6"),
+            "dsl" => Some("on DSL"),
+            "cable" => Some("on cable"),
+            "fibre" => Some("on fibre"),
+            "lte" => Some("on LTE"),
+            "wifi" => Some("on wifi"),
+            "vpn" => Some("through a VPN"),
+            _ => None,
+        })
+        .collect();
+    if !telling.is_empty() {
+        let mut t = telling.join(", ");
+        t.replace_range(..1, &t[..1].to_uppercase());
+        summary.push_str(&format!(" {t}."));
+    }
+    card.summary = Some(summary);
+    let mut rows = Vec::new();
+    rows.push(row("Status", status));
+    push(&mut rows, "Since", since);
+    push(&mut rows, "Last connected", t.str("last_connected").and_then(when));
+    push(&mut rows, "First connected", t.str("first_connected").and_then(when));
+    push(&mut rows, "Network (IPv4)", t.value("asn_v4").and_then(Value::as_i64).map(|a| format!("AS{a}")));
+    push(&mut rows, "Network (IPv6)", t.value("asn_v6").and_then(Value::as_i64).map(|a| format!("AS{a}")));
+    push(&mut rows, "Prefix (IPv4)", t.str("prefix_v4").map(str::to_string));
+    push(&mut rows, "Prefix (IPv6)", t.str("prefix_v6").map(str::to_string));
+    push(&mut rows, "Country", country);
+    push(&mut rows, "Uptime", t.i64("uptime_s").map(duration));
+    push(&mut rows, "Firmware", t.i64("firmware").map(|f| f.to_string()));
+    push(&mut rows, "Public", t.bool("public").map(|p| if p { "yes".into() } else { "no".into() }));
+    if !tags.is_empty() {
+        rows.push(row("Tags", tags.join(", ")));
+    }
+    card.sections.extend(section(None, rows));
+    if let Some(u) = t.str("url") {
+        card.links.push(Link { label: "This probe on RIPE Atlas".into(), url: u.to_string() });
+    }
+    card
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{card, Subject};
@@ -2385,6 +2466,15 @@ mod tests {
         let c = present("bgp-churn", serde_json::json!({"collector": "RRC01", "city": "London", "ixp": "LINX / LONAP", "window_s": 60, "updates": 2300, "updates_per_min": 2300.0, "announced_prefixes": 1900, "announced_per_min": 1900.0, "withdrawn_prefixes": 60, "withdrawn_per_min": 60.0, "peers_heard": 136, "url": "https://ris-live.ripe.net/?host=rrc01.ripe.net"}), "RRC01 — London");
         assert_eq!(c.title, "RRC01, London");
         assert_eq!(c.summary.as_deref(), Some("RRC01 at LINX / LONAP heard 2,300 BGP updates a minute from 136 peers: 1,900 prefixes announced and 60 withdrawn."));
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
+    }
+
+    #[test]
+    fn a_probe_reads_as_where_it_is_on_the_internet() {
+        let c = present("internet-probes", serde_json::json!({"probe_id": 1, "status": "connected", "status_since": "2026-09-15T01:02:12Z", "last_connected": "2026-09-17T12:00:00Z", "first_connected": "2010-10-29T16:33:03Z", "public": true, "asn_v4": 206238, "asn_v6": 206238, "prefix_v4": "45.138.228.0/22", "prefix_v6": "2a10:3780::/29", "country": "NL", "description": "Robert #1 100/10 Freedom.nl", "firmware": 4790, "uptime_s": 400000000, "tags": ["home", "nat", "native-ipv6", "system-v1"], "url": "https://atlas.ripe.net/probes/1/"}), "Robert #1 100/10 Freedom.nl");
+        assert_eq!(c.title, "Robert #1 100/10 Freedom.nl (#1)");
+        assert_eq!(c.summary.as_deref(), Some("A probe connected since 15 Sep 01:02 UTC, in AS206238 (NL). At home, behind NAT, native IPv6."));
+        assert_eq!(value(&c, "Network (IPv4)"), "AS206238");
         assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
     }
 }
