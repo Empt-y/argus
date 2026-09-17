@@ -12,8 +12,10 @@
 //! the same register it read yesterday writes nothing, and the outcome
 //! reports every unchanged feature as a duplicate, which is what it is.
 
-use crate::{Store, StoreError, WriteOutcome};
+use crate::{EntityFilter, EntityRow, Store, StoreError, WriteOutcome};
 use argus_core::entity::{EntityKind, Observation};
+use argus_core::geo::BoundingBox;
+use chrono::{DateTime, Utc};
 use geozero::ToWkb;
 
 impl Store {
@@ -113,6 +115,57 @@ impl Store {
     }
 
     /// Current feature versions per layer, for the catalogue's live count.
+    /// The features inside one box as entity rows — the version current now,
+    /// or the one current at `at` — so a viewport read and a WebSocket
+    /// snapshot carry the wind farms and the food businesses alongside the
+    /// aircraft. The tiler reads the same table with its own clipping; this
+    /// is the row shape the list route and the stream already speak. A
+    /// polygon's row also gets a point on its surface, for a client that
+    /// places a label.
+    pub(crate) async fn features_in_bbox(
+        &self,
+        part: &BoundingBox,
+        at: Option<DateTime<Utc>>,
+        filter: &EntityFilter,
+        limit: i64,
+    ) -> Result<Vec<EntityRow>, StoreError> {
+        if limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query_as::<_, EntityRow>(
+            r#"
+            SELECT 'feature' AS entity_kind, feature_key AS entity_key, source_id, layer_id,
+                   valid_from AS observed_at,
+                   ST_X(ST_PointOnSurface(geom)) AS lon, ST_Y(ST_PointOnSurface(geom)) AS lat,
+                   CASE WHEN GeometryType(geom) = 'POINT' THEN NULL
+                        ELSE ST_AsGeoJSON(geom)::jsonb END AS geom,
+                   NULL::double precision AS alt_m, NULL::text AS alt_datum,
+                   NULL::real AS course_deg, NULL::real AS heading_deg,
+                   NULL::real AS speed_mps, NULL::real AS vrate_mps,
+                   'live' AS quality, label, attrs
+            FROM features
+            WHERE geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)
+              AND valid_from <= COALESCE($8, now())
+              AND (valid_to IS NULL OR valid_to > COALESCE($8, now()))
+              AND ($5::text[] IS NULL OR layer_id = ANY($5))
+              AND ($6::text[] IS NULL OR 'feature' = ANY($6))
+            ORDER BY valid_from DESC
+            LIMIT $7
+            "#,
+        )
+        .bind(part.west)
+        .bind(part.south)
+        .bind(part.east)
+        .bind(part.north)
+        .bind(filter.layers_arg())
+        .bind(filter.kinds_arg())
+        .bind(limit)
+        .bind(at)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn feature_counts(&self) -> Result<Vec<(String, i64)>, StoreError> {
         let rows: Vec<(String, i64)> = sqlx::query_as(
             "SELECT layer_id, count(*) FROM features WHERE valid_to IS NULL GROUP BY layer_id",

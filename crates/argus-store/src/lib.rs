@@ -52,6 +52,28 @@ impl EntityFilter {
     }
 }
 
+/// Fit the moving things and the features into one viewport limit.
+///
+/// Each side is already the newest `limit` rows of its own table. Both
+/// fit, both come; otherwise each is guaranteed half, and whatever one
+/// side does not use the other may. Appending the features after the
+/// entities and cutting the tail looked reasonable and starved them
+/// exactly where they mattered: a box over central London holds more
+/// crimes than the cap, so no food business was ever listed there.
+fn share(entities: Vec<EntityRow>, mut features: Vec<EntityRow>, limit: i64) -> Vec<EntityRow> {
+    let limit = limit.max(0) as usize;
+    let mut entities = entities;
+    if entities.len() + features.len() > limit {
+        let half = limit / 2;
+        let entities_take = entities.len().min(half.max(limit.saturating_sub(features.len())));
+        let features_take = features.len().min(limit - entities_take);
+        entities.truncate(entities_take);
+        features.truncate(features_take);
+    }
+    entities.extend(features);
+    entities
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("database error: {0}")]
@@ -459,7 +481,8 @@ impl Store {
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;
-            out.extend(rows);
+            let features = self.features_in_bbox(&part, None, filter, limit).await?;
+            out.extend(share(rows, features, limit));
         }
         out.truncate(limit as usize);
         Ok(out)
@@ -518,7 +541,8 @@ impl Store {
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;
-            out.extend(rows);
+            let features = self.features_in_bbox(&part, Some(at), filter, limit).await?;
+            out.extend(share(rows, features, limit));
         }
         out.truncate(limit as usize);
         Ok(out)
@@ -759,5 +783,55 @@ impl EntityRow {
 
     pub fn kind(&self) -> Option<EntityKind> {
         model::parse_entity_kind(&self.entity_kind)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(kind: &str, n: usize) -> EntityRow {
+        EntityRow {
+            entity_kind: kind.into(),
+            entity_key: format!("{kind}:{n}"),
+            source_id: "test".into(),
+            layer_id: "test".into(),
+            observed_at: Utc::now(),
+            lon: None,
+            lat: None,
+            geom: None,
+            alt_m: None,
+            alt_datum: None,
+            course_deg: None,
+            heading_deg: None,
+            speed_mps: None,
+            vrate_mps: None,
+            quality: "live".into(),
+            label: None,
+            attrs: serde_json::Value::Null,
+        }
+    }
+
+    fn rows(kind: &str, n: usize) -> Vec<EntityRow> {
+        (0..n).map(|i| row(kind, i)).collect()
+    }
+
+    fn kinds(out: &[EntityRow]) -> (usize, usize) {
+        let f = out.iter().filter(|r| r.entity_kind == "feature").count();
+        (out.len() - f, f)
+    }
+
+    #[test]
+    fn a_viewport_at_its_limit_still_shows_features() {
+        // Both fit: nothing is cut.
+        assert_eq!(kinds(&share(rows("aircraft", 10), rows("feature", 10), 100)), (10, 10));
+        // More crimes than the cap and as many features: half each.
+        assert_eq!(kinds(&share(rows("event", 5000), rows("feature", 5000), 5000)), (2500, 2500));
+        // Few features: they all come, and the moving things take the rest.
+        assert_eq!(kinds(&share(rows("event", 5000), rows("feature", 100), 5000)), (4900, 100));
+        // Few moving things: likewise the other way.
+        assert_eq!(kinds(&share(rows("aircraft", 7), rows("feature", 5000), 5000)), (7, 4993));
+        // An odd limit loses nothing to rounding.
+        assert_eq!(share(rows("event", 50), rows("feature", 50), 51).len(), 51);
     }
 }

@@ -49,7 +49,7 @@ async fn state(auth: AuthMode) -> Option<(ApiState, tokio::sync::MutexGuard<'sta
     let url = std::env::var("ARGUS_TEST_DATABASE_URL").ok()?;
     let store = Store::connect(&url, 4).await.expect("connect to test database");
     store.migrate().await.expect("migrations apply");
-    sqlx::query("TRUNCATE observations, entities, sources, devices, geofences, alerts CASCADE")
+    sqlx::query("TRUNCATE observations, entities, features, sources, devices, geofences, alerts CASCADE")
         .execute(store.pool())
         .await
         .expect("truncate");
@@ -1325,4 +1325,76 @@ async fn overlays_are_in_the_style_hidden_and_dated_like_the_contacts() {
     // The ground-only style an offline region is cut from carries none.
     let (_, body) = get(&state, "/v1/style.json?basemap_only=true", LOOPBACK).await;
     assert!(json(&body)["sources"].get("overlay:night-lights").is_none());
+}
+
+/// A feature is an entity to a viewport. The wind farms, cables and food
+/// businesses live in their own versioned table, and for a while the list
+/// route and the stream snapshot read only `entities`, so the tiler drew
+/// them and the web client never saw one. A feature inside the box comes
+/// back live and at a DVR instant, with its shape; a version that had not
+/// opened yet at that instant does not.
+#[tokio::test]
+async fn a_feature_in_the_box_is_listed_beside_the_aircraft_live_and_rewound() {
+    let Some((state, _guard)) = state(AuthMode::LoopbackExempt).await else {
+        return;
+    };
+    sqlx::query(
+        "INSERT INTO sources (source_id, layer_id, display_name, entity_kind,
+                              cost_class, state, last_success, observations)
+         VALUES ('test-fsa', 'food-hygiene', 'Test FSA', 'feature', 'free',
+                 'live', now(), 1)",
+    )
+    .execute(state.store.pool())
+    .await
+    .expect("seed a feature source");
+    let now = Utc::now();
+    let cafe = Observation::new(
+        SourceId::new("test-fsa"),
+        EntityId::new(argus_core::entity::EntityKind::Feature, "fhrs:1"),
+        now,
+        Quality::Live,
+    )
+    .with_position(Position { lon: -97.74, lat: 30.27, alt_m: None, datum: argus_core::entity::AltitudeDatum::Geoid })
+    .with_label("THE CAFE")
+    .with_attrs(serde_json::json!({"rating": 5}));
+    let farm = Observation::new(
+        SourceId::new("test-fsa"),
+        EntityId::new(argus_core::entity::EntityKind::Feature, "farm:1"),
+        now,
+        Quality::Live,
+    )
+    .with_geom(geo_types::Geometry::Polygon(geo_types::Polygon::new(
+        geo_types::LineString::from(vec![(-97.8, 30.2), (-97.7, 30.2), (-97.7, 30.3), (-97.8, 30.3), (-97.8, 30.2)]),
+        vec![],
+    )))
+    .with_label("A FARM");
+    state.store.write_features(&[cafe, farm]).await.expect("features written");
+
+    let (status, body) = get(&state, "/v1/entities?bbox=-98,30,-97,31", LOOPBACK).await;
+    assert_eq!(status, StatusCode::OK);
+    let body = json(&body);
+    let entities = body["entities"].as_array().unwrap();
+    let cafe = entities.iter().find(|e| e["entity_key"] == "fhrs:1").expect("the cafe is in the box");
+    assert_eq!(cafe["entity_kind"], "feature");
+    assert_eq!(cafe["layer_id"], "food-hygiene");
+    assert_eq!(cafe["attrs"]["rating"], 5);
+    assert!((cafe["lon"].as_f64().unwrap() + 97.74).abs() < 1e-6);
+    assert!(cafe["geom"].is_null(), "a point needs no shape beside its position");
+    let farm = entities.iter().find(|e| e["entity_key"] == "farm:1").expect("the farm is in the box");
+    assert_eq!(farm["geom"]["type"], "Polygon");
+    assert!(farm["lon"].as_f64().is_some(), "a polygon still gets a point on its surface");
+    assert!(entities.iter().any(|e| e["entity_kind"] == "aircraft"), "the aircraft are still there");
+
+    // Filtered to the layer, only the features come.
+    let (_, body) = get(&state, "/v1/entities?bbox=-98,30,-97,31&layers=food-hygiene", LOOPBACK).await;
+    let only: Vec<String> = json(&body)["entities"].as_array().unwrap().iter().map(|e| e["entity_kind"].as_str().unwrap().to_string()).collect();
+    assert!(!only.is_empty() && only.iter().all(|k| *k == "feature"), "{only:?}");
+
+    // Rewound to before the version opened, it is not there; just after, it is.
+    let before = (now - Duration::minutes(5)).to_rfc3339();
+    let (_, body) = get(&state, &format!("/v1/entities?bbox=-98,30,-97,31&at={before}"), LOOPBACK).await;
+    assert!(json(&body)["entities"].as_array().unwrap().iter().all(|e| e["entity_key"] != "fhrs:1"), "not yet");
+    let after = (Utc::now() + Duration::seconds(1)).to_rfc3339();
+    let (_, body) = get(&state, &format!("/v1/entities?bbox=-98,30,-97,31&at={after}"), LOOPBACK).await;
+    assert!(json(&body)["entities"].as_array().unwrap().iter().any(|e| e["entity_key"] == "fhrs:1"), "current at that instant");
 }

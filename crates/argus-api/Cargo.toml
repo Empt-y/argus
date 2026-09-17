@@ -36,5 +36,6 @@ hex = { workspace = true }
 argus-core = { workspace = true }
 sqlx = { workspace = true }
 geozero = { workspace = true }
+geo-types = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true }
