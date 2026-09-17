@@ -695,6 +695,21 @@ fn build_sources(
         )));
     }
 
+    // Phase 8, the internet. One RIPEstat handle places prefixes and AS
+    // numbers for every driver that needs it, so the same prefix is asked
+    // about once.
+    let ripestat = std::sync::Arc::new(argus_ingest::ripestat::RipeStat::new(http.clone()));
+    // Internet outages from IODA: BGP visibility, active probing and
+    // darknet signals per country, region and network, drawn on the Natural
+    // Earth outlines IODA publishes — 57 MB of topology, kept in the
+    // geometry cache after the first download.
+    if enabled("internet-outages") {
+        sources.push(std::sync::Arc::new(
+            argus_ingest::sources::Ioda::new(patient_http.clone(), ripestat.clone())
+                .with_shape_cache(zone_cache.clone()),
+        ));
+    }
+
     // Fires (Phase 7): every VIIRS detection of the last day, worldwide,
     // every half hour. Keyed: the FIRMS MAP_KEY, which is not the
     // Earthdata token.

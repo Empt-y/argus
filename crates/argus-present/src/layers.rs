@@ -1894,6 +1894,70 @@ pub fn geomagnetic<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used
     card
 }
 
+// --- internet outages -----------------------------------------------------------
+
+/// What each IODA signal measures, as a clause.
+fn outage_signal_words(datasource: &str) -> &'static str {
+    match datasource {
+        "bgp" => "fewer of its prefixes were visible in BGP",
+        "ping-slash24" => "its /24s stopped answering active probes",
+        "merit-nt" => "its background traffic into the darknet dropped",
+        "gtr" => "Google saw its traffic fall",
+        _ => "one of IODA's signals dropped",
+    }
+}
+
+pub fn internet_outage<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "Internet outage (IODA)");
+    let name = t.str("name").unwrap_or(subject.key).to_string();
+    let scope = t.str("scope").unwrap_or("place");
+    let datasource = t.str("datasource").unwrap_or("").to_string();
+    let duration_s = t.i64("duration_s");
+    let ongoing = t.bool("ongoing") == Some(true);
+    let score = t.f64("score");
+    let placed_by = t.str("placed_by").unwrap_or("");
+    let asn = t.i64("asn");
+    card.title = format!("Internet outage: {name}");
+
+    let mut summary = format!("{} — {}", match scope {
+        "country" => "A whole country".to_string(),
+        "region" => "A region".to_string(),
+        "network" => asn.map(|a| format!("A network, AS{a}")).unwrap_or_else(|| "A network".into()),
+        "network in region" => asn.map(|a| format!("A network in one region, AS{a}")).unwrap_or_else(|| "A network in one region".into()),
+        "network in country" => asn.map(|a| format!("A network in one country, AS{a}")).unwrap_or_else(|| "A network in one country".into()),
+        _ => "A place".to_string(),
+    }, outage_signal_words(&datasource));
+    match (duration_s, ongoing) {
+        (Some(d), true) => summary.push_str(&format!(" for at least {}", duration(d))),
+        (Some(d), false) => summary.push_str(&format!(" for {}", duration(d))),
+        (None, _) => {}
+    }
+    summary.push('.');
+    if let Some(s) = score {
+        summary.push_str(&format!(" IODA severity {}.", num(s, 0)));
+    }
+    if placed_by == "registered country" {
+        summary.push_str(" AS-wide: drawn on the country the network is registered in.");
+    }
+    card.summary = Some(summary);
+
+    let mut rows = Vec::new();
+    rows.push(row_note("Signal", datasource.clone(), outage_signal_words(&datasource)));
+    push(&mut rows, "Duration", duration_s.map(|d| if ongoing { format!("at least {}", duration(d)) } else { duration(d) }));
+    push(&mut rows, "Severity", score.map(|s| num(s, 0)));
+    rows.push(row("Scope", scope));
+    push(&mut rows, "AS number", asn.map(|a| format!("AS{a}")));
+    push(&mut rows, "Drawn on", Some(placed_by.to_string()).filter(|p| !p.is_empty()));
+    push(&mut rows, "Detection", t.str("method").map(|m| format!("{m} of recent history")));
+    t.skip("location");
+    card.sections.extend(section(None, rows));
+    if let Some(u) = t.str("url") {
+        card.links.push(Link { label: "This event on IODA".into(), url: u.to_string() });
+    }
+    card
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{card, Subject};
@@ -2131,5 +2195,16 @@ mod tests {
         let closed = present("geomagnetic-activity", serde_json::json!({"site": "SID", "location": "Sidmouth, UK", "project": "AWN", "activity_nt": 13.7, "hour": "2018-08-12T09:00:00Z", "status": "green", "peak_24h_nt": 13.7, "until": "2018-09-01T00:00", "hours": []}), "Sidmouth");
         assert!(closed.summary.as_deref().unwrap().ends_with("The site is closed."), "{:?}", closed.summary);
         assert!(closed.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{closed:#?}");
+    }
+
+    #[test]
+    fn an_outage_reads_as_what_dropped_where_and_for_how_long() {
+        let c = present("internet-outages", serde_json::json!({"name": "AS41678 (TIBUS)", "scope": "network", "location": "asn/41678", "asn": 41678, "datasource": "bgp", "score": 60179.1, "duration_s": 1209600, "ongoing": true, "method": "median", "placed_by": "registered country", "url": "https://ioda.inetintel.cc.gatech.edu/asn/41678"}), "AS41678 (TIBUS)");
+        assert_eq!(c.title, "Internet outage: AS41678 (TIBUS)");
+        assert_eq!(c.summary.as_deref(), Some("A network, AS41678 — fewer of its prefixes were visible in BGP for at least 14 days. IODA severity 60,179. AS-wide: drawn on the country the network is registered in."));
+        assert_eq!(value(&c, "Duration"), "at least 14 days");
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
+        let tonga = present("internet-outages", serde_json::json!({"name": "Tonga", "scope": "country", "location": "country/TO", "datasource": "ping-slash24", "score": 24585.36, "duration_s": 3600, "method": "median", "placed_by": "country"}), "Tonga");
+        assert_eq!(tonga.summary.as_deref(), Some("A whole country — its /24s stopped answering active probes for 1 h. IODA severity 24,585."));
     }
 }

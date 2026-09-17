@@ -6,7 +6,9 @@
 
 pub mod chain;
 pub mod geojson;
+pub mod topojson;
 pub mod http;
+pub mod ripestat;
 pub mod runtime;
 pub mod scheduler;
 pub mod sources;

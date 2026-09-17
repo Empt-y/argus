@@ -280,6 +280,16 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#7ef9a0".into();
         s.min_zoom = 0;
     }),
+    ("internet-outages", |s| {
+        // Countries, regions and the networks in them that dropped off the
+        // internet: an area layer, from the lowest zoom because a country
+        // going dark is the point, and pointless once one region fills the
+        // screen. A warning amber.
+        s.geometry = GeometryClass::Area;
+        s.color = "#f2a93b".into();
+        s.min_zoom = 0;
+        s.max_zoom = 10;
+    }),
     ("ground-stations", |s| {
         // Four and a half thousand worldwide, most of them dark, so from
         // z3 — the question is where the network can hear from, asked of a

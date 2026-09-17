@@ -481,6 +481,27 @@ one, revised through the hour). The "national scalar"
 is therefore spatial after all: it is the reading at the instrument that
 decides it, and the card says so. CC BY-NC-SA 3.0. HTTP only.
 
+### IODA internet outages — done
+`api.ioda.inetintel.cc.gatech.edu/v2/outages/events?from=&until=&limit=&page=`
+(`from` is mandatory; `limit` 2,000 was hit in a 24 h window, so page).
+Locations `country/TO`, `region/1906`, `asn/41678`, `geoasn/3269-1906`;
+datasources `bgp` (1,330 of 2,000), `ping-slash24`, `merit-nt`, `gtr`;
+`status` always 0 and `fraction`/`uncertainty` always null; three
+(location, start) pairs repeat with another datasource, so the key carries
+it. An event still running is listed with its duration so far, capped at
+14 days. Outlines: `v2/topo/region` and `v2/topo/country` are TopoJSON in a
+JSON envelope, **served `Content-Encoding: gzip`** (14 MB → 37 MB and 7 → 20),
+4,581 Natural Earth admin-1 regions keyed `properties.id` and 247 countries
+keyed `properties.usercode` (8 with null geometry). Decoded by
+`argus_ingest::topojson` (no transform in these files; the decoder handles
+one anyway) and kept in the geometry cache. AS-wide events are drawn on the
+AS's registration country via RIPEstat `rir-stats-country` (Ash's call —
+RIPEstat `geoloc` refuses an ASN). First poll ≈ 5 min: two topologies and
+~600 RIPEstat lookups at 4/s. Kind `event`, 10 min, key
+`ioda:{location}:{datasource}:{start}`, dated by start (the 7-day event
+horizon means a two-week-old ongoing outage lives in the DVR, not the live
+view). Licence: free for non-commercial use with attribution.
+
 ### NASA GIBS imagery overlays — done (not ingested)
 `gibs.earthdata.nasa.gov/wmts/epsg3857/best/{layer}/default/{YYYY-MM-DD}/{TileMatrixSet}/{z}/{y}/{x}.{jpg|png}`,
 keyless, public domain, CORS on. Served as a catalogue at `/v1/overlays` and as
@@ -578,8 +599,11 @@ Easiest first, roughly most reusable first:
 18. ~~Phase 7 imagery and night lights~~ — done as GIBS overlays, not
     ingested. ~~FSA food hygiene~~ — done.
 19. ~~AuroraWatch UK~~ — done, placed at the alerting magnetometer.
-    The keyless list is empty. Phase 8: BGP needs a geolocation step before
-    it is spatial.
+    The keyless list is empty.
+20. Phase 8, the internet — the geolocation step is RIPEstat (`geoloc` for
+    a prefix, `rir-stats-country` for an AS): ~~IODA outages~~ — done.
+    Then GRIP hijacks, RIS Live churn per collector, RIPE Atlas probes,
+    PeeringDB exchanges and facilities, root-server sites.
 
 ## Process notes
 

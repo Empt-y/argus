@@ -133,6 +133,20 @@ fn mercator(lon: f64, lat: f64) -> (f64, f64) {
 }
 
 /// A tile's bounds in Web Mercator metres: left, bottom, right, top.
+/// Whether a geometry has no coordinates at all.
+fn is_empty(g: &geo_types::Geometry<f64>) -> bool {
+    use geo_types::Geometry as G;
+    match g {
+        G::Point(_) | G::Line(_) | G::Rect(_) | G::Triangle(_) => false,
+        G::LineString(l) => l.0.is_empty(),
+        G::Polygon(p) => p.exterior().0.is_empty(),
+        G::MultiPoint(m) => m.0.is_empty(),
+        G::MultiLineString(m) => m.0.iter().all(|l| l.0.is_empty()),
+        G::MultiPolygon(m) => m.0.iter().all(|p| p.exterior().0.is_empty()),
+        G::GeometryCollection(c) => c.0.iter().all(is_empty),
+    }
+}
+
 fn mercator_bounds(bounds: argus_core::geo::BoundingBox) -> (f64, f64, f64, f64) {
     let (left, bottom) = mercator(bounds.west, bounds.south);
     let (right, top) = mercator(bounds.east, bounds.north);
@@ -204,6 +218,14 @@ fn encode_layer(
         let Some(geometry) = row.geometry.geometry.as_ref() else {
             continue;
         };
+        // A shape the database simplified away — a region smaller than one
+        // tile pixel at z2, or one whose box overlapped the tile but whose
+        // outline did not — arrives as a geometry with no coordinates, and
+        // encoded it is a feature of type UNKNOWN that a strict decoder
+        // refuses. Nothing to draw, so nothing is written.
+        if is_empty(geometry) {
+            continue;
+        }
         // Encoded in Web Mercator, which is what a tile is. Handing `to_mvt`
         // degrees with the tile's latitude edges maps latitude linearly
         // across the tile, and Mercator is not linear in latitude: at z2 a
@@ -423,6 +445,26 @@ mod tests {
         assert!(names.contains(&"earthquakes") && names.contains(&"weather-alerts"));
         let quakes = tile.layers.iter().find(|l| l.name == "earthquakes").unwrap();
         assert_eq!(quakes.features.len(), 2);
+    }
+
+    #[test]
+    fn a_shape_simplified_to_nothing_is_not_a_feature() {
+        // What PostGIS hands back for a region smaller than a tile pixel:
+        // a polygon with no coordinates. Beside it, a real one.
+        let coord = TileCoord::new(0, 0, 0);
+        let mut empty = point_row("flood-warnings", "gone", 0.0, 0.0);
+        empty.geometry = wkb::Decode { geometry: Some(geo_types::Geometry::Polygon(geo_types::Polygon::new(geo_types::LineString(vec![]), vec![]))) };
+        let mut real = point_row("flood-warnings", "here", 0.0, 0.0);
+        real.geometry = wkb::Decode {
+            geometry: Some(geo_types::Geometry::Polygon(geo_types::Polygon::new(
+                geo_types::LineString::from(vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0), (0.0, 0.0)]),
+                vec![],
+            ))),
+        };
+        let tile = decode(&encode(&[empty, real], coord, coord.bounds()));
+        let layer = tile.layers.iter().find(|l| l.name == "flood-warnings").unwrap();
+        assert_eq!(layer.features.len(), 1);
+        assert_eq!(layer.features[0].r#type, Some(geozero::mvt::tile::GeomType::Polygon as i32));
     }
 
     #[test]

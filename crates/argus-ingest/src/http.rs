@@ -121,6 +121,18 @@ impl HttpClient {
         self
     }
 
+    /// A client paced faster than one a second, for the upstream that says
+    /// it can take more. RIPEstat asks for no more than about eight a second
+    /// and is consulted once per prefix or AS number an event names, which
+    /// at one a second made a fresh start of the outage layer a ten-minute
+    /// wait. The pacer is per client, so this loosens nothing shared.
+    #[must_use]
+    pub fn with_rate_per_second(mut self, per_second: u32) -> Self {
+        let per_second = std::num::NonZeroU32::new(per_second.max(1)).expect("at least one");
+        self.pacer = std::sync::Arc::new(governor::RateLimiter::keyed(governor::Quota::per_second(per_second)));
+        self
+    }
+
     /// POST a form and discard the body, keeping whatever session cookie came
     /// back. Used for login exchanges, which answer with a cookie and nothing
     /// worth reading.

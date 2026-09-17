@@ -165,6 +165,9 @@ enabled = true    # FSA food hygiene ratings: every inspected food business in t
 [sources.geomagnetic-activity]
 enabled = true    # AuroraWatch UK magnetometers and the aurora alert level, every 15 min
 
+[sources.internet-outages]
+enabled = true    # IODA internet outages on country/region outlines, every 10 min (57 MB of topology once)
+
 # Keyed sources, off until a credential is supplied.
 [sources.buses]
 enabled = true
