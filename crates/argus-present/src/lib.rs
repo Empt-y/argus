@@ -125,6 +125,7 @@ pub fn card(subject: Subject<'_>) -> Card {
         "data-centres" => layers::data_centre(subject, attrs, &mut used),
         "internet-exchanges" => layers::internet_exchange(subject, attrs, &mut used),
         "root-servers" => layers::root_server(subject, attrs, &mut used),
+        "news-events" => layers::news_event(subject, attrs, &mut used),
         "river-discharge" => layers::river_discharge(subject, attrs, &mut used),
         "hf-propagation" => layers::hf_path(subject, attrs, &mut used),
         _ => generic::card(subject, attrs, &mut used),

@@ -750,6 +750,15 @@ fn build_sources(
         )));
     }
 
+    // Phase 9, conflict and news. GDELT's coded news events, every fifteen
+    // minutes, all of them; the driver walks forward from the last file it
+    // has and waits on one that is listed but not yet published.
+    if enabled("news-events") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::Gdelt::new(
+            http.clone(),
+        )));
+    }
+
     // Fires (Phase 7): every VIIRS detection of the last day, worldwide,
     // every half hour. Keyed: the FIRMS MAP_KEY, which is not the
     // Earthdata token.

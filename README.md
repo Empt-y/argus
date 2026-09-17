@@ -16,7 +16,7 @@ this box, and where did it reappear".
 This is a personal project and it is early, but it works end to end. As of
 September 2026:
 
-- A Rust daemon (`argusd`) polls 43 upstream feeds into 40 layers, with
+- A Rust daemon (`argusd`) polls 44 upstream feeds into 41 layers, with
   provider failover chains, per-provider budgets and a disk budget.
 - Postgres/PostGIS/TimescaleDB store with raw observations rolled up into
   tracks and daily summaries.
@@ -55,8 +55,9 @@ look-alike GRIP flags, at the place the prefix lives, and the BGP update
 rate at each of RIPE's two dozen route collectors, from the RIS Live
 stream held open in the background, the seventeen thousand RIPE Atlas
 probes with whether each is connected, the data centres and internet
-exchanges where networks meet (PeeringDB), and every anycast site of the
-thirteen DNS root servers.
+exchanges where networks meet (PeeringDB), every anycast site of the
+thirteen DNS root servers, and the world's news as coded events — who did
+what to whom, where — from GDELT, every fifteen minutes.
 
 Not built yet: conflict and news, SDR receivers, phone-as-sensor, the AR
 sky view.
@@ -186,6 +187,7 @@ steady-state figures from a weekday, before any TimescaleDB compression.
 | `radiosondes` | ~0.3 M | ~0.1 GB | tracks of every balloon aloft |
 | `metars` | ~0.2 M | ~0.1 GB | 5,000 aerodromes, one row per new report |
 | `fires` | ~0.2 M | ~0.1 GB | 200,000 VIIRS detections a day worldwide, each written once |
+| `news-events` | ~0.13 M | ~60 MB | every GDELT event, 1,300 a file, four files an hour |
 | `hf-propagation` | ~1 M | ~0.4 GB | 7,000 beacon paths touching the AOIs every ten minutes, each a great circle |
 | `street-crime` | ~0.2 M | ~0.1 GB | half a million crimes a month across England and Wales, rewritten every three days |
 | `internet-probes` | ~0.8 M | ~0.35 GB | 17,000 RIPE Atlas probes dated by poll time, every 30 min |

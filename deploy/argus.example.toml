@@ -186,6 +186,9 @@ enabled = true    # PeeringDB internet exchanges placed through their facilities
 [sources.root-servers]
 enabled = true    # DNS root server anycast sites from root-servers.org, weekly
 
+[sources.news-events]
+enabled = true    # GDELT coded news events, every 15 min, ~130,000 a day (~60 MB/day)
+
 # Keyed sources, off until a credential is supplied.
 [sources.buses]
 enabled = true

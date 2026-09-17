@@ -562,6 +562,23 @@ is five rows at one coordinate) and town names are typed by hand ("Chicago"
 instances summed and case-insensitive towns → 1,467 sites, 2,028 instances,
 keys unique. Kind `feature`, weekly, key `root:{letter}:{cc}:{town}[:n]`.
 
+### GDELT 2.0 events — done
+`data.gdeltproject.org/gdeltv2/lastupdate.txt` (http 301s to https) names the
+newest `YYYYMMDDHHMMSS.export.CSV.zip`: a ZIP of one tab-separated CSV, no
+header, **61 columns**, ~1,340 events per 15-minute file, 81–99 KB. **A listed
+file may not exist yet** — at 16:00 the 15:15, 15:30, 15:45 and 16:00 files all
+404'd though `lastupdate.txt` and the 128 MB `masterfilelist.txt` named them —
+so the driver walks forward from the last file it has and stops at the first
+404. ActionGeo_Type over a file: city 529, country 401, state 203, US state
+132, landmark 39, none 36; `NumSources` is 1 in a fresh file (mentions
+accumulate later). `Day` was 2025-09-17 on 16 of 1,340 rows dated 2026-09-17
+(GDELT's bug); `DATEADDED` is the file stamp and is the date used. The GEO API
+404s and the DOC API 429s past one request per 5 s; neither is used. Kept
+whole, per Ash — every root class, ~130k/day, names verbatim. The archive is
+read by `argus_ingest::zip` (one entry, stored or deflated, no crate); codes
+by `sources::cameo` (20 roots + 290 codes). Kind `event`, 15 min, key
+`gdelt:{GlobalEventID}`.
+
 ### NASA GIBS imagery overlays — done (not ingested)
 `gibs.earthdata.nasa.gov/wmts/epsg3857/best/{layer}/default/{YYYY-MM-DD}/{TileMatrixSet}/{z}/{y}/{x}.{jpg|png}`,
 keyless, public domain, CORS on. Served as a catalogue at `/v1/overlays` and as
@@ -611,6 +628,13 @@ tile. Each product carries its `lag_days` in the catalogue.
 - **Met Office DataHub** — free tier exists, but Open-Meteo covers it keyless.
 
 ## Checked and rejected
+
+- **ACLED** — key and registration. **UCDP GED** — `ucdpapi.pcr.uu.se` answers
+  401 "API token required. Add header: x-ucdp-access-token". **ReliefWeb** —
+  v1 is 410 (decommissioned); v2 is 403 without an *approved* `appname`
+  (self-registration on their site). All three would be the conflict and
+  humanitarian companions to GDELT if a key is ever obtained; ReliefWeb's
+  country-level records could draw on the cached IODA country outlines.
 
 | Source | Why |
 |---|---|
@@ -664,8 +688,10 @@ Easiest first, roughly most reusable first:
     a prefix, `rir-stats-country` for an AS): ~~IODA outages~~ — done,
     ~~GRIP hijacks~~ — done, ~~RIS Live churn per collector~~ — done,
     ~~RIPE Atlas probes~~ — done, ~~PeeringDB exchanges and facilities~~ —
-    done, ~~root-server sites~~ — done. **Phase 8 is complete.** Next: Phase
-    9, conflict and news.
+    done, ~~root-server sites~~ — done. **Phase 8 is complete.**
+21. Phase 9, conflict and news: ~~GDELT events~~ — done. Then GDACS
+    disasters, NASA EONET natural events, Smithsonian weekly volcanic
+    activity. ACLED, UCDP and ReliefWeb are keyed (below).
 
 ## Process notes
 
@@ -728,6 +754,10 @@ Things that have gone wrong more than once, in the order they were learned.
 - Look at line endings in a hex dump, not a terminal. GMN's files end every
   line `\n\r`; `head` shows a clean file and `str::lines` hands back lines
   that begin with `\r`, which fail every `starts_with`.
+- A file listed in an index may not exist yet. GDELT names a 15-minute
+  file up to an hour before it can be fetched. Walk forward from the last
+  one you have and stop at the first 404, rather than treating the index
+  as truth or the 404 as a failure.
 - The machine's own clock is an input. Every station layer read as `delayed`
   by about an hour on the day METARs were built, and the cause was Athena
   running 59 minutes ahead with NTP off, not the feeds. Check `date -u`

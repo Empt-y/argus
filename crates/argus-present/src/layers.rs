@@ -2357,6 +2357,97 @@ pub fn root_server<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used
     card
 }
 
+// --- GDELT news events ------------------------------------------------------------
+
+/// An actor as a phrase: its name, then what the codes add.
+fn gdelt_actor(v: Option<&Value>) -> Option<String> {
+    let v = v?.as_object()?;
+    let name = v.get("name").and_then(Value::as_str).map(|n| n.to_string());
+    let mut extras = Vec::new();
+    for (key, label) in [("type", ""), ("country", ""), ("known_group", ""), ("ethnic", "ethnic "), ("religion", "")] {
+        if let Some(s) = v.get(key).and_then(Value::as_str) {
+            extras.push(format!("{label}{s}"));
+        }
+    }
+    match (name, extras.is_empty()) {
+        (Some(n), true) => Some(n),
+        (Some(n), false) => Some(format!("{n} ({})", extras.join(", "))),
+        (None, false) => Some(extras.join(", ")),
+        (None, true) => v.get("code").and_then(Value::as_str).map(str::to_string),
+    }
+}
+
+pub fn news_event<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "News event (GDELT)");
+    let event = t.str("event").unwrap_or("event").to_string();
+    let place = t.str("place").map(str::to_string);
+    let precision = t.str("place_precision").map(str::to_string);
+    let quad = t.str("quad").map(str::to_string);
+    let goldstein = t.f64("goldstein");
+    let mentions = t.i64("mentions");
+    let sources = t.i64("sources");
+    let articles = t.i64("articles");
+    let tone = t.f64("tone");
+    let a1 = gdelt_actor(t.value("actor1"));
+    let a2 = gdelt_actor(t.value("actor2"));
+    let mut title = event.clone();
+    title.replace_range(..1, &title[..1].to_uppercase());
+    card.title = match &place {
+        Some(p) => format!("{title} — {p}"),
+        None => title,
+    };
+    let mut summary = String::new();
+    match (&a1, &a2) {
+        (Some(a), Some(b)) => summary.push_str(&format!("{a} → {event} → {b}")),
+        (Some(a), None) => summary.push_str(&format!("{a}: {event}")),
+        (None, Some(b)) => summary.push_str(&format!("{event}, toward {b}")),
+        (None, None) => summary.push_str(&event),
+    }
+    if let Some(p) = &place {
+        summary.push_str(&format!(", in {p}"));
+        if let Some(pr) = &precision {
+            summary.push_str(&format!(" (placed at {pr} precision)"));
+        }
+    }
+    summary.push('.');
+    if let (Some(q), Some(g)) = (&quad, goldstein) {
+        summary.push_str(&format!(" {}, Goldstein {}.", { let mut q = q.clone(); q.replace_range(..1, &q[..1].to_uppercase()); q }, num(g, 1)));
+    }
+    if let (Some(s), Some(a)) = (sources, articles) {
+        summary.push_str(&format!(" Reported by {} in {}", plural(s, "source", "sources"), plural(a, "article", "articles")));
+        if let Some(tn) = tone {
+            summary.push_str(&format!(", tone {}", num(tn, 1)));
+        }
+        summary.push('.');
+    }
+    card.summary = Some(summary);
+    let mut rows = Vec::new();
+    rows.push(row_note("Event", event, format!("CAMEO {}", t.str("event_code").unwrap_or("?"))));
+    push(&mut rows, "Class", t.str("root").map(|r| format!("{r} ({})", t.str("root_code").unwrap_or("?"))));
+    push(&mut rows, "Quadrant", quad);
+    push(&mut rows, "Goldstein", goldstein.map(|g| format!("{} (−10 hostile … +10 cooperative)", num(g, 1))));
+    push(&mut rows, "Actor 1", a1);
+    push(&mut rows, "Actor 2", a2);
+    push(&mut rows, "Place", place);
+    push(&mut rows, "Precision", precision);
+    push(&mut rows, "Country", t.str("place_country").map(str::to_string));
+    push(&mut rows, "Mentions", mentions.map(|m| m.to_string()));
+    push(&mut rows, "Tone", tone.map(|tn| num(tn, 1)));
+    push(&mut rows, "Event day", t.str("day").and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y%m%d").ok()).map(|d| d.format("%-d %b %Y").to_string()));
+    if t.bool("root_event") == Some(true) {
+        rows.push(row("Root event", "the main event of its article"));
+    }
+    t.skip("adm1");
+    t.skip("quad_class");
+    t.skip("gdelt_id");
+    card.sections.extend(section(None, rows));
+    if let Some(u) = t.str("source_url") {
+        card.links.push(Link { label: "The article".into(), url: u.to_string() });
+    }
+    card
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{card, Subject};
@@ -2649,5 +2740,14 @@ mod tests {
         assert_eq!(root.title, "K-root, Accra");
         assert_eq!(root.summary.as_deref(), Some("An anycast site of the K root server, run by RIPE NCC: 1 instance here in Accra, GH, answering over IPv4 and IPv6."));
         assert!(root.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{root:#?}");
+    }
+
+    #[test]
+    fn a_news_event_reads_as_who_did_what_to_whom_where() {
+        let c = present("news-events", serde_json::json!({"event_code": "1452", "event": "engage in violent protest for policy change", "root_code": "14", "root": "protest", "quad_class": 3, "quad": "verbal conflict", "goldstein": -7.5, "mentions": 12, "sources": 1, "articles": 12, "tone": -4.1, "root_event": true, "actor1": {"code": "GEOCOP", "name": "POLICE", "country": "GEO", "type": "COP"}, "actor2": {"code": "GEOCVL", "name": "PROTESTER", "country": "GEO", "type": "CVL"}, "place": "Tbilisi, T'bilisi, Georgia", "place_precision": "city", "place_country": "GG", "adm1": "GG51", "day": "20260917", "source_url": "https://example.org/tbilisi", "gdelt_id": "1323535600"}), "engage in violent protest for policy change: Tbilisi, T'bilisi, Georgia");
+        assert_eq!(c.title, "Engage in violent protest for policy change — Tbilisi, T'bilisi, Georgia");
+        assert_eq!(c.summary.as_deref(), Some("POLICE (COP, GEO) → engage in violent protest for policy change → PROTESTER (CVL, GEO), in Tbilisi, T'bilisi, Georgia (placed at city precision). Verbal conflict, Goldstein -7.5. Reported by 1 source in 12 articles, tone -4.1."));
+        assert_eq!(value(&c, "Event day"), "17 Sep 2026");
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
     }
 }

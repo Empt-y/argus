@@ -336,6 +336,15 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#f4f6fa".into();
         s.min_zoom = 2;
     }),
+    ("news-events", |s| {
+        // A hundred and thirty thousand a day, a third of them at a
+        // country's centroid. From z5, where a city's cluster is a shape
+        // and a centroid's stack is one dot; below that the tile is the
+        // world's news on one screen and megabytes. Newsprint.
+        s.geometry = GeometryClass::Point;
+        s.color = "#e0ddd5".into();
+        s.min_zoom = 5;
+    }),
     ("ground-stations", |s| {
         // Four and a half thousand worldwide, most of them dark, so from
         // z3 — the question is where the network can hear from, asked of a
