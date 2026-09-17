@@ -1958,6 +1958,120 @@ pub fn internet_outage<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, 
     card
 }
 
+// --- BGP incidents ----------------------------------------------------------------
+
+/// GRIP's event types in words.
+fn bgp_event_words(event_type: &str) -> (&'static str, &'static str) {
+    match event_type {
+        "moas" => ("MOAS", "the same prefix announced by two origin networks at once"),
+        "submoas" => ("Sub-MOAS", "a more-specific of someone's prefix announced from another origin — the shape of a hijack"),
+        "defcon" => ("Defcon", "an origin announcing a more-specific of its own prefix"),
+        "edges" => ("New edge", "an adjacency between two networks never seen in a path before"),
+        _ => ("BGP event", "a routing change GRIP flagged"),
+    }
+}
+
+/// An AS from the attrs, as a phrase.
+fn as_phrase(v: &Value) -> Option<String> {
+    let asn = v.get("asn").and_then(Value::as_i64)?;
+    let mut s = format!("AS{asn}");
+    match (v.get("org").and_then(Value::as_str), v.get("name").and_then(Value::as_str)) {
+        (Some(org), _) => s.push_str(&format!(" ({org}")),
+        (None, Some(name)) => s.push_str(&format!(" ({name}")),
+        (None, None) => return Some(s),
+    }
+    if let Some(c) = v.get("country").and_then(Value::as_str) {
+        s.push_str(&format!(", {c}"));
+    }
+    s.push(')');
+    Some(s)
+}
+
+fn as_list(v: Option<&Value>) -> Vec<String> {
+    v.and_then(Value::as_array).map(|a| a.iter().filter_map(as_phrase).collect()).unwrap_or_default()
+}
+
+pub fn bgp_incident<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let event_type = t.str("event_type").unwrap_or("").to_string();
+    let (kind_words, meaning) = bgp_event_words(&event_type);
+    let mut card = base(subject, &format!("{kind_words} (GRIP)"));
+    let prefixes = t.strings("prefixes");
+    let suspicion = t.i64("suspicion");
+    let labels = t.strings("labels");
+    let explanation = t.str("explanation").map(str::to_string);
+    let victims = as_list(t.value("victims"));
+    let attackers = as_list(t.value("attackers"));
+    let newcomers = as_list(t.value("newcomers"));
+    let place = t.str("place").map(str::to_string);
+    let finished = t.str("finished").and_then(when);
+    let tr = t.bool("traceroute_worthy") == Some(true);
+    let prefix = prefixes.first().cloned().unwrap_or_else(|| subject.key.to_string());
+    card.title = format!("{kind_words}: {prefix}");
+
+    let mut summary = format!("{}{}", &meaning[..1].to_uppercase(), &meaning[1..]);
+    summary.push_str(&format!(", on {prefix}"));
+    if let Some(v) = victims.first() {
+        summary.push_str(&format!(" belonging to {v}"));
+    }
+    if let Some(a) = attackers.iter().find(|a| !victims.contains(a)).or(attackers.first()) {
+        summary.push_str(&format!(", also announced by {a}"));
+    } else if victims.is_empty()
+        && let Some(n) = newcomers.first()
+    {
+        summary.push_str(&format!(", from {n}"));
+    }
+    summary.push('.');
+    if let Some(s) = suspicion {
+        summary.push_str(&format!(" GRIP's suspicion {s}/100"));
+        if let Some(l) = labels.first() {
+            summary.push_str(&format!(", labelled {l}"));
+        }
+        summary.push('.');
+    }
+    if let Some(p) = &place {
+        summary.push_str(&format!(" The prefix is placed at {p}."));
+    }
+    if finished.is_some() {
+        summary.push_str(" Over.");
+    }
+    card.summary = Some(summary);
+
+    let mut rows = Vec::new();
+    rows.push(row_note("Type", kind_words, meaning));
+    push(&mut rows, "Suspicion", suspicion.map(|s| format!("{s} / 100")));
+    if !labels.is_empty() {
+        rows.push(row("Labels", labels.join(", ")));
+    }
+    push(&mut rows, "Explanation", explanation);
+    push(&mut rows, "Confidence", t.i64("confidence").map(|c| format!("{c}%")));
+    if prefixes.len() > 1 {
+        rows.push(row("Prefixes", prefixes.join(", ")));
+    }
+    push(&mut rows, "Finished", finished);
+    if tr {
+        rows.push(row("Traceroutes", "GRIP judged this worth probing"));
+    }
+    push(&mut rows, "Placed at", place);
+    push(&mut rows, "Place covers", t.f64("place_covers_percent").map(|p| format!("{}% of the prefix", num(p, 0))));
+    card.sections.extend(section(None, rows));
+    let mut who = Vec::new();
+    for v in &victims {
+        who.push(row("Victim", v.clone()));
+    }
+    for a in &attackers {
+        who.push(row("Announced by", a.clone()));
+    }
+    for n in newcomers.iter().filter(|n| !victims.contains(n) && !attackers.contains(n)) {
+        who.push(row("Newcomer", n.clone()));
+    }
+    card.sections.extend(section(Some("Networks"), who));
+    if let Some(u) = t.str("url") {
+        card.links.push(Link { label: "This event on GRIP".into(), url: u.to_string() });
+    }
+    card
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{card, Subject};
@@ -2206,5 +2320,17 @@ mod tests {
         assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
         let tonga = present("internet-outages", serde_json::json!({"name": "Tonga", "scope": "country", "location": "country/TO", "datasource": "ping-slash24", "score": 24585.36, "duration_s": 3600, "method": "median", "placed_by": "country"}), "Tonga");
         assert_eq!(tonga.summary.as_deref(), Some("A whole country — its /24s stopped answering active probes for 1 h. IODA severity 24,585."));
+    }
+
+    #[test]
+    fn a_hijack_reads_as_who_took_what_from_whom() {
+        let c = present("bgp-incidents", serde_json::json!({"event_type": "submoas", "suspicion": 80, "labels": ["incident"], "explanation": "signs of incident, but no explanation", "confidence": 50, "prefixes": ["151.242.183.0/24", "151.242.180.0/22"], "victims": [{"asn": 137897, "name": "NEXTGEN-AS-IN", "org": "Nextgen Broadband", "country": "IN", "rank": 30000}], "attackers": [{"asn": 10753, "name": "LVLT-10753", "org": "Level 3 Parent, LLC", "country": "US", "rank": 12}], "newcomers": [{"asn": 10753}, {"asn": 137897}], "place": "New Delhi, IN", "place_covers_percent": 100.0, "url": "https://grip.inetintel.cc.gatech.edu/events/submoas/x"}), "Sub-MOAS 151.242.183.0/24");
+        assert_eq!(c.title, "Sub-MOAS: 151.242.183.0/24");
+        assert_eq!(c.summary.as_deref(), Some("A more-specific of someone's prefix announced from another origin — the shape of a hijack, on 151.242.183.0/24 belonging to AS137897 (Nextgen Broadband, IN), also announced by AS10753 (Level 3 Parent, LLC, US). GRIP's suspicion 80/100, labelled incident. The prefix is placed at New Delhi, IN."));
+        assert_eq!(value(&c, "Victim"), "AS137897 (Nextgen Broadband, IN)");
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
+        let moas = present("bgp-incidents", serde_json::json!({"event_type": "moas", "suspicion": 30, "labels": ["suspicious"], "prefixes": ["23.226.128.0/24"], "victims": [], "attackers": [{"asn": 204966}, {"asn": 154132}], "newcomers": [{"asn": 204966}, {"asn": 154132}], "place": "US", "finished": "2026-09-17T13:35:00Z"}), "MOAS 23.226.128.0/24");
+        assert_eq!(moas.summary.as_deref(), Some("The same prefix announced by two origin networks at once, on 23.226.128.0/24, also announced by AS204966. GRIP's suspicion 30/100, labelled suspicious. The prefix is placed at US. Over."));
+        assert!(moas.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{moas:#?}");
     }
 }

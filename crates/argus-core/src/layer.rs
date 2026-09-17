@@ -290,6 +290,14 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.min_zoom = 0;
         s.max_zoom = 10;
     }),
+    ("bgp-incidents", |s| {
+        // Hundreds a day worldwide, each a prefix somewhere. From z0 like
+        // the quakes: a hijack is news wherever it is. A hot magenta, so it
+        // is not mistaken for an outage's amber or a fire's orange.
+        s.geometry = GeometryClass::Point;
+        s.color = "#e040fb".into();
+        s.min_zoom = 0;
+    }),
     ("ground-stations", |s| {
         // Four and a half thousand worldwide, most of them dark, so from
         // z3 — the question is where the network can hear from, asked of a

@@ -119,6 +119,7 @@ pub fn card(subject: Subject<'_>) -> Card {
         "food-hygiene" => layers::food_hygiene(subject, attrs, &mut used),
         "geomagnetic-activity" => layers::geomagnetic(subject, attrs, &mut used),
         "internet-outages" => layers::internet_outage(subject, attrs, &mut used),
+        "bgp-incidents" => layers::bgp_incident(subject, attrs, &mut used),
         "river-discharge" => layers::river_discharge(subject, attrs, &mut used),
         "hf-propagation" => layers::hf_path(subject, attrs, &mut used),
         _ => generic::card(subject, attrs, &mut used),

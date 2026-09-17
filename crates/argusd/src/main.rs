@@ -709,6 +709,14 @@ fn build_sources(
                 .with_shape_cache(zone_cache.clone()),
         ));
     }
+    // BGP hijacks, leaks and their look-alikes from GRIP, placed at the
+    // prefix they happened on.
+    if enabled("bgp-incidents") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::Grip::new(
+            patient_http.clone(),
+            ripestat.clone(),
+        )));
+    }
 
     // Fires (Phase 7): every VIIRS detection of the last day, worldwide,
     // every half hour. Keyed: the FIRMS MAP_KEY, which is not the

@@ -168,6 +168,9 @@ enabled = true    # AuroraWatch UK magnetometers and the aurora alert level, eve
 [sources.internet-outages]
 enabled = true    # IODA internet outages on country/region outlines, every 10 min (57 MB of topology once)
 
+[sources.bgp-incidents]
+enabled = true    # GRIP BGP hijacks and leaks (suspicion >= 20) at the prefix's location, every 10 min
+
 # Keyed sources, off until a credential is supplied.
 [sources.buses]
 enabled = true

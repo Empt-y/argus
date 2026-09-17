@@ -417,7 +417,7 @@ mod tests {
         let c: Config = toml::from_str(include_str!("../../../deploy/argus.example.toml"))
             .expect("the example config should parse");
         assert!(c.validate().is_ok());
-        for id in ["air-quality", "airports", "argo-floats", "fireballs", "food-hygiene", "geomagnetic-activity", "internet-outages", "cable-landings", "firms", "power-grid", "river-discharge", "submarine-cables", "buoys", "buses", "carbon-intensity", "ground-stations", "hf-propagation", "metars", "meteors", "offshore-platforms", "road-disruptions", "sea-state", "seismographs", "street-crime", "wind-farms", "river-gauges", "storm-overflows", "flights"] {
+        for id in ["air-quality", "airports", "argo-floats", "fireballs", "food-hygiene", "geomagnetic-activity", "internet-outages", "bgp-incidents", "cable-landings", "firms", "power-grid", "river-discharge", "submarine-cables", "buoys", "buses", "carbon-intensity", "ground-stations", "hf-propagation", "metars", "meteors", "offshore-platforms", "road-disruptions", "sea-state", "seismographs", "street-crime", "wind-farms", "river-gauges", "storm-overflows", "flights"] {
             assert!(c.sources.contains_key(id), "example config lacks [sources.{id}]");
         }
     }

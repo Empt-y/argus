@@ -502,6 +502,19 @@ RIPEstat `geoloc` refuses an ASN). First poll ≈ 5 min: two topologies and
 horizon means a two-week-old ongoing outage lives in the DVR, not the live
 view). Licence: free for non-commercial use with attribution.
 
+### GRIP BGP hijacks and leaks — done
+`api.grip.inetintel.cc.gatech.edu/json/events` 301s to `/v1/json/events`;
+`?length=N` (DataTables-style; `recordsTotal` 10,000). 500 events spanned
+five hours and were **4.6 MB**, because `asinfo` (AS-Rank name, org, country)
+repeats per event — worth it, it is what names the networks. Types seen:
+`defcon` 270, `submoas` 136, `moas` 94 (`edges` exists). A `pfx_event` is
+`prefix` for MOAS and `sub_pfx`/`super_pfx` for the rest; MOAS names no
+victim. `summary.inference_result.primary_inference.suspicion_level`: 80 for
+237 of 500, 20 or below for the rest and those are labelled `legitimate`, so
+the layer keeps suspicion ≥ 20. Placed by RIPEstat `geoloc` of
+`summary.prefixes[0]` (445 distinct in 500 events). Kind `event`, 10 min,
+key `grip:{id}`, dated `view_ts`. Non-commercial with attribution.
+
 ### NASA GIBS imagery overlays — done (not ingested)
 `gibs.earthdata.nasa.gov/wmts/epsg3857/best/{layer}/default/{YYYY-MM-DD}/{TileMatrixSet}/{z}/{y}/{x}.{jpg|png}`,
 keyless, public domain, CORS on. Served as a catalogue at `/v1/overlays` and as
@@ -601,9 +614,9 @@ Easiest first, roughly most reusable first:
 19. ~~AuroraWatch UK~~ — done, placed at the alerting magnetometer.
     The keyless list is empty.
 20. Phase 8, the internet — the geolocation step is RIPEstat (`geoloc` for
-    a prefix, `rir-stats-country` for an AS): ~~IODA outages~~ — done.
-    Then GRIP hijacks, RIS Live churn per collector, RIPE Atlas probes,
-    PeeringDB exchanges and facilities, root-server sites.
+    a prefix, `rir-stats-country` for an AS): ~~IODA outages~~ — done,
+    ~~GRIP hijacks~~ — done. Then RIS Live churn per collector, RIPE Atlas
+    probes, PeeringDB exchanges and facilities, root-server sites.
 
 ## Process notes
 
