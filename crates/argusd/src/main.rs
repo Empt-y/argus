@@ -679,6 +679,14 @@ fn build_sources(
             http.clone(),
         )));
     }
+    // Every inspected food business in the UK with its hygiene rating, from
+    // the FSA: 363 files, one per council, weekly. A feature layer; the
+    // quarter of the register with no geocode is counted and left out.
+    if enabled("food-hygiene") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::FoodHygiene::new(
+            http.clone(),
+        )));
+    }
 
     // Fires (Phase 7): every VIIRS detection of the last day, worldwide,
     // every half hour. Keyed: the FIRMS MAP_KEY, which is not the

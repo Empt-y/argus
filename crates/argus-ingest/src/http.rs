@@ -169,10 +169,24 @@ impl HttpClient {
     /// upstreams that page with `Link: <…>; rel="next"` and nothing in the
     /// body says where the next page is.
     pub async fn get_page(&self, url: &str) -> Result<Page, SourceError> {
+        self.get_page_with(url, &[]).await
+    }
+
+    /// GET with request headers of the driver's own, for the upstream that
+    /// wants a version or format header before it will answer at all (the
+    /// FSA's API 404s the route itself without `x-api-version`). Not for
+    /// credentials: those go through the session client.
+    pub async fn get_bytes_with(&self, url: &str, headers: &[(&str, &str)]) -> Result<Vec<u8>, SourceError> {
+        Ok(self.get_page_with(url, headers).await?.body)
+    }
+
+    async fn get_page_with(&self, url: &str, extra: &[(&str, &str)]) -> Result<Page, SourceError> {
         self.pace(url).await;
-        let response = self
-            .inner
-            .get(url)
+        let mut request = self.inner.get(url);
+        for (name, value) in extra {
+            request = request.header(*name, *value);
+        }
+        let response = request
             .send()
             .await
             .map_err(|e| SourceError::Transport(describe(&e)))?;

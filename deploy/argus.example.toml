@@ -159,6 +159,9 @@ enabled = true    # NASA/JPL CNEOS fireballs, worldwide, six-hourly
 [sources.airports]
 enabled = true    # OurAirports: every airfield and heliport with runways, worldwide, weekly (17 MB)
 
+[sources.food-hygiene]
+enabled = true    # FSA food hygiene ratings: every inspected food business in the UK, weekly (363 files, 575 MB)
+
 # Keyed sources, off until a credential is supplied.
 [sources.buses]
 enabled = true

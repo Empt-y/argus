@@ -443,6 +443,27 @@ mirror at `davidmegginson.github.io` and raw GitHub both work. Public domain.
 Kind `feature`, weekly, key `airport:{ident}`; 10,508 carry an ICAO code,
 the join to `metars`. Closed airfields (13,524) are kept and marked.
 
+### FSA food hygiene ratings — done
+`api.ratings.food.gov.uk/Authorities` (needs `x-api-version: 2` or the route
+itself 404s; `?api-version=2` does not work) lists 363 local authorities with
+a `FileName` each: `ratings.food.gov.uk/OpenDataFiles/FHRS{code}en-GB.xml`,
+which 307-redirects to `/api/open-data-files/…` — follow it or you get a
+37-byte body. One XML document per authority, single-line, 575 MB for
+613,379 establishments; Birmingham's is 10 MB. Refreshed nightly per
+authority from its own extract (`Header/ExtractDate` ranged from April to
+yesterday across the set). OGL v3. Counted over the whole register before
+building: **157,539 (26%) have no `Geocode`** and are skipped (Birmingham
+3,774, North Yorkshire 3,224 of them); `RatingValue` is spelled two ways
+for the same state and Welsh authorities carry `cy-gb` keys in their
+English files, so the rating is normalised from `RatingKey` (24 distinct
+keys → 0–5 or one of six words); 70,980 rating dates are empty; 79
+records carry `RightToReply` as double-escaped HTML, not stored. Scores
+are points lost (0 best): hygiene /25, structural /25, confidence in
+management /30. Kind `feature`, weekly, key `fhrs:{FHRSID}`; nothing that
+changes nightly (the extract date) goes in the attrs or every row would
+re-version every week. A business that leaves the register stays as its
+last version, like a closed airfield.
+
 ### NASA GIBS imagery overlays — done (not ingested)
 `gibs.earthdata.nasa.gov/wmts/epsg3857/best/{layer}/default/{YYYY-MM-DD}/{TileMatrixSet}/{z}/{y}/{x}.{jpg|png}`,
 keyless, public domain, CORS on. Served as a catalogue at `/v1/overlays` and as
@@ -479,7 +500,7 @@ tile. Each product carries its `lag_days` in the catalogue.
   envelope), FSA food hygiene, Helioviewer (solar imagery), OurAirports
   (86,021 rows, public domain), Safecast (radiation, but London samples were
   over a year old), AuroraWatch UK, NOAA CO-OPS tides (US only), OSM notes.
-  OurAirports is built (above).
+  OurAirports and FSA food hygiene are built (above).
 
 ## Promising, unverified
 
@@ -538,9 +559,9 @@ Easiest first, roughly most reusable first:
 16. ~~Open-Meteo flood~~ — done, sampled at the EA gauges.
 17. ~~wspr.live~~ — done, aggregated per path in ClickHouse.
 18. ~~Phase 7 imagery and night lights~~ — done as GIBS overlays, not
-    ingested. Left on the keyless list: FSA food hygiene, AuroraWatch UK (a
-    national scalar, not spatial). Phase 8: BGP needs a geolocation step
-    before it is spatial.
+    ingested. ~~FSA food hygiene~~ — done.
+19. Left on the keyless list: AuroraWatch UK (a national scalar, not
+    spatial). Phase 8: BGP needs a geolocation step before it is spatial.
 
 ## Process notes
 

@@ -116,6 +116,7 @@ pub fn card(subject: Subject<'_>) -> Card {
         "fires" => layers::fire(subject, attrs, &mut used),
         "fireballs" => layers::fireball(subject, attrs, &mut used),
         "airports" => layers::airport(subject, attrs, &mut used),
+        "food-hygiene" => layers::food_hygiene(subject, attrs, &mut used),
         "river-discharge" => layers::river_discharge(subject, attrs, &mut used),
         "hf-propagation" => layers::hf_path(subject, attrs, &mut used),
         _ => generic::card(subject, attrs, &mut used),

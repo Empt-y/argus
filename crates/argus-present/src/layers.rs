@@ -1678,6 +1678,133 @@ fn dbm_words(dbm: f64) -> String {
     }
 }
 
+// --- food hygiene ---------------------------------------------------------------
+
+/// What a rating means, in the scheme's own words.
+fn rating_words(rating: &Value) -> (String, Option<&'static str>) {
+    match rating {
+        Value::Number(n) => {
+            let n = n.as_i64().unwrap_or(-1);
+            let meaning = match n {
+                5 => Some("very good"),
+                4 => Some("good"),
+                3 => Some("generally satisfactory"),
+                2 => Some("improvement necessary"),
+                1 => Some("major improvement necessary"),
+                0 => Some("urgent improvement necessary"),
+                _ => None,
+            };
+            (format!("{n} out of 5"), meaning)
+        }
+        Value::String(s) => (
+            match s.as_str() {
+                "pass" => "Pass".to_string(),
+                "pass_and_eat_safe" => "Pass and Eat Safe".to_string(),
+                "improvement_required" => "Improvement required".to_string(),
+                "awaiting_inspection" => "Awaiting inspection".to_string(),
+                "awaiting_publication" => "Awaiting publication".to_string(),
+                "exempt" => "Exempt".to_string(),
+                other => words(other),
+            },
+            None,
+        ),
+        _ => ("Unrated".to_string(), None),
+    }
+}
+
+/// The scheme's fourteen business types as a phrase in a sentence.
+fn business_words(t: &str) -> String {
+    match t {
+        "Restaurant/Cafe/Canteen" => "a restaurant, café or canteen".into(),
+        "Retailers - other" => "a retailer".into(),
+        "Retailers - supermarkets/hypermarkets" => "a supermarket".into(),
+        "Other catering premises" => "catering premises".into(),
+        "Takeaway/sandwich shop" => "a takeaway or sandwich shop".into(),
+        "Pub/bar/nightclub" => "a pub, bar or nightclub".into(),
+        "Hospitals/Childcare/Caring Premises" => "a hospital, childcare or care premises".into(),
+        "School/college/university" => "a school, college or university".into(),
+        "Mobile caterer" => "a mobile caterer".into(),
+        "Hotel/bed & breakfast/guest house" => "a hotel, B&B or guest house".into(),
+        "Manufacturers/packers" => "a manufacturer or packer".into(),
+        "Distributors/Transporters" => "a distributor or transporter".into(),
+        "Farmers/growers" => "a farm or grower".into(),
+        "Importers/Exporters" => "an importer or exporter".into(),
+        other => format!("a {}", other.to_lowercase()),
+    }
+}
+
+/// `2026-03-12` as `12 Mar 2026`; a rating date has no time.
+fn day_words(s: &str) -> Option<String> {
+    chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok().map(|d| d.format("%-d %b %Y").to_string())
+}
+
+pub fn food_hygiene<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let scheme = t.str("scheme").unwrap_or("FHRS");
+    let mut card = base(subject, &format!("Food hygiene rating ({scheme}, Food Standards Agency)"));
+    let name = t.str("name").unwrap_or(subject.key).to_string();
+    card.title = name.clone();
+    let rating = t.value("rating").cloned().unwrap_or(Value::Null);
+    let (rating_text, meaning) = rating_words(&rating);
+    let rated = t.str("rating_date").and_then(day_words);
+    let business_type = t.str("business_type").map(business_words);
+    let authority = t.str("authority").map(str::to_string);
+    let pending = t.bool("new_rating_pending") == Some(true);
+
+    let by = authority.as_ref().map(|a| format!(" by {a}")).unwrap_or_default();
+    let on = rated.as_ref().map(|d| format!(" on {d}")).unwrap_or_default();
+    let mut summary = match (&rating, meaning) {
+        (Value::Number(_), Some(m)) => format!("Rated {rating_text}, {m}{on}{by}"),
+        (Value::String(s), _) if s.starts_with("awaiting") => format!("{rating_text}{by}, so no rating yet"),
+        (Value::String(s), _) if s == "exempt" => format!("Exempt from rating{by}"),
+        _ => format!("Rated {rating_text}{on}{by}"),
+    };
+    if let Some(b) = &business_type {
+        summary.push_str(&format!("; {b}"));
+    }
+    summary.push('.');
+    if pending {
+        summary.push_str(" A new rating is pending publication.");
+    }
+    card.summary = Some(summary);
+
+    let mut rows = vec![match meaning {
+        Some(m) => row_note("Rating", rating_text, m),
+        None => row("Rating", rating_text),
+    }];
+    push(&mut rows, "Rated", rated);
+    push(&mut rows, "Business type", t.str("business_type").map(str::to_string));
+    push(&mut rows, "Address", t.str("address").map(str::to_string));
+    push(&mut rows, "Postcode", t.str("postcode").map(str::to_string));
+    push(&mut rows, "Local authority", authority);
+    if pending {
+        rows.push(row("New rating", "pending publication"));
+    }
+    card.sections.extend(section(None, rows));
+
+    // The three scores behind an FHRS rating, as the inspector marks them:
+    // points lost, so 0 is clean and the worst possible is 25, 25 and 30.
+    let mut scores = Vec::new();
+    for (key, label, worst) in [("hygiene_points", "Hygiene", 25), ("structural_points", "Structural", 25), ("management_points", "Confidence in management", 30)] {
+        if let Some(p) = t.i64(key) {
+            scores.push(row_note(label, format!("{p} points lost"), format!("out of {worst}; 0 is best")));
+        }
+    }
+    card.sections.extend(section(Some("Inspection scores"), scores));
+
+    let fhrsid = t.str("fhrsid").map(str::to_string);
+    t.skip("authority_code");
+    if let Some(u) = t.str("url") {
+        card.links.push(Link { label: "Rating on ratings.food.gov.uk".into(), url: u.to_string() });
+    } else if let Some(id) = &fhrsid {
+        card.links.push(Link { label: "Rating on ratings.food.gov.uk".into(), url: format!("https://ratings.food.gov.uk/business/{id}") });
+    }
+    if let Some(u) = t.str("authority_url") {
+        card.links.push(Link { label: "Local authority".into(), url: u.to_string() });
+    }
+    card
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{card, Subject};
@@ -1881,5 +2008,23 @@ mod tests {
         assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
         assert_eq!(super::dbm_words(37.0), "5 W");
         assert_eq!(super::dbm_words(40.0), "10 W");
+    }
+
+    #[test]
+    fn a_food_business_reads_as_its_rating_and_what_it_means() {
+        let c = present("food-hygiene", serde_json::json!({"name": "THE CROWN", "business_type": "Pub/bar/nightclub", "scheme": "FHRS", "rating": 3, "rating_date": "2026-03-12", "new_rating_pending": true, "hygiene_points": 10, "structural_points": 5, "management_points": 10, "address": "The Crown, 1 High Street, Birmingham", "postcode": "B1 1AA", "authority": "Birmingham", "authority_code": "402", "authority_url": "http://www.birmingham.gov.uk", "fhrsid": "55", "url": "https://ratings.food.gov.uk/business/55"}), "THE CROWN");
+        assert_eq!(c.title, "THE CROWN");
+        assert_eq!(c.summary.as_deref(), Some("Rated 3 out of 5, generally satisfactory on 12 Mar 2026 by Birmingham; a pub, bar or nightclub. A new rating is pending publication."));
+        assert_eq!(value(&c, "Rating"), "3 out of 5");
+        assert_eq!(value(&c, "Hygiene"), "10 points lost");
+        assert_eq!(c.links[0].url, "https://ratings.food.gov.uk/business/55");
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
+
+        let scottish = present("food-hygiene", serde_json::json!({"name": "MOROCCAN MARKET", "business_type": "Retailers - other", "scheme": "FHIS", "rating": "improvement_required", "rating_date": "2023-07-28", "address": "George Street, Aberdeen", "postcode": "AB25 1HZ", "authority": "Aberdeen City", "authority_code": "760", "authority_url": "http://www.aberdeencity.gov.uk", "fhrsid": "1608170", "url": "https://ratings.food.gov.uk/business/1608170"}), "MOROCCAN MARKET");
+        assert_eq!(scottish.summary.as_deref(), Some("Rated Improvement required on 28 Jul 2023 by Aberdeen City; a retailer."));
+        assert!(scottish.sections.iter().all(|s| s.heading.as_deref() != Some("Inspection scores")), "FHIS publishes no scores");
+
+        let waiting = present("food-hygiene", serde_json::json!({"name": "CAFFI CYMRU", "scheme": "FHRS", "rating": "awaiting_inspection", "authority": "Gwynedd", "fhrsid": "56", "url": "https://ratings.food.gov.uk/business/56"}), "CAFFI CYMRU");
+        assert_eq!(waiting.summary.as_deref(), Some("Awaiting inspection by Gwynedd, so no rating yet."));
     }
 }

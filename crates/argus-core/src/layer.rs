@@ -264,6 +264,14 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#c5d9f1".into();
         s.min_zoom = 6;
     }),
+    ("food-hygiene", |s| {
+        // Four hundred and fifty thousand points, one per inspected kitchen,
+        // packed as densely as the crimes; the same z12 floor for the same
+        // reason. Green, because the scheme's own stickers are green.
+        s.geometry = GeometryClass::Point;
+        s.color = "#5cb85c".into();
+        s.min_zoom = 12;
+    }),
     ("ground-stations", |s| {
         // Four and a half thousand worldwide, most of them dark, so from
         // z3 — the question is where the network can hear from, asked of a
