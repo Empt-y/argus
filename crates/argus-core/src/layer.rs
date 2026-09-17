@@ -314,6 +314,28 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#8fb3d9".into();
         s.min_zoom = 4;
     }),
+    ("data-centres", |s| {
+        // Five thousand buildings. From z5, where a metro's cluster of
+        // them is a shape; slate grey, the colour of the buildings.
+        s.geometry = GeometryClass::Point;
+        s.color = "#a0a8b8".into();
+        s.min_zoom = 5;
+    }),
+    ("internet-exchanges", |s| {
+        // Nine hundred exchanges, some a single point and some several
+        // buildings across a city. From z3: the world's big exchanges are
+        // a map of where the internet is dense. Copper, for the wire.
+        s.geometry = GeometryClass::Point;
+        s.color = "#d98c4a".into();
+        s.min_zoom = 3;
+    }),
+    ("root-servers", |s| {
+        // Fifteen hundred anycast sites of thirteen servers. From z2; the
+        // spread is the point. A clean white, like the runway lights.
+        s.geometry = GeometryClass::Point;
+        s.color = "#f4f6fa".into();
+        s.min_zoom = 2;
+    }),
     ("ground-stations", |s| {
         // Four and a half thousand worldwide, most of them dark, so from
         // z3 — the question is where the network can hear from, asked of a

@@ -2199,6 +2199,164 @@ pub fn atlas_probe<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used
     card
 }
 
+// --- PeeringDB facilities and exchanges ------------------------------------------
+
+fn plural(n: i64, one: &str, many: &str) -> String {
+    if n == 1 { format!("{n} {one}") } else { format!("{} {many}", num(n as f64, 0)) }
+}
+
+pub fn data_centre<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "Colocation facility (PeeringDB)");
+    let name = t.str("name").unwrap_or(subject.key).to_string();
+    let operator = t.str("operator").map(str::to_string);
+    let city = t.str("city").map(str::to_string);
+    let country = t.str("country").map(str::to_string);
+    let networks = t.i64("networks").unwrap_or(0);
+    let exchanges = t.i64("exchanges").unwrap_or(0);
+    let carriers = t.i64("carriers").unwrap_or(0);
+    card.title = name.clone();
+    let mut summary = String::from("A data centre");
+    if let Some(o) = &operator {
+        summary.push_str(&format!(" run by {o}"));
+    }
+    match (&city, &country) {
+        (Some(c), Some(k)) => summary.push_str(&format!(" in {c}, {k}")),
+        (None, Some(k)) => summary.push_str(&format!(" in {k}")),
+        _ => {}
+    }
+    summary.push_str(&format!(", where {} and {} are present", plural(networks, "network", "networks"), plural(exchanges, "internet exchange", "internet exchanges")));
+    if carriers > 0 {
+        summary.push_str(&format!(", with {}", plural(carriers, "carrier", "carriers")));
+    }
+    summary.push('.');
+    card.summary = Some(summary);
+    let mut rows = Vec::new();
+    push(&mut rows, "Operator", operator);
+    push(&mut rows, "Address", t.str("address").map(str::to_string));
+    push(&mut rows, "Country", country);
+    rows.push(row("Networks present", num(networks as f64, 0)));
+    rows.push(row("Exchanges present", exchanges.to_string()));
+    push(&mut rows, "Carriers", Some(carriers).filter(|c| *c > 0).map(|c| c.to_string()));
+    push(&mut rows, "CLLI", t.str("clli").map(str::to_string));
+    card.sections.extend(section(None, rows));
+    t.skip("peeringdb_id");
+    if let Some(u) = t.str("website") {
+        card.links.push(Link { label: "Operator's site".into(), url: u.to_string() });
+    }
+    if let Some(u) = t.str("url") {
+        card.links.push(Link { label: "On PeeringDB".into(), url: u.to_string() });
+    }
+    card
+}
+
+pub fn internet_exchange<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "Internet exchange point (PeeringDB)");
+    let name = t.str("name").unwrap_or(subject.key).to_string();
+    let long_name = t.str("long_name").map(str::to_string);
+    let city = t.str("city").map(str::to_string);
+    let country = t.str("country").map(str::to_string);
+    let networks = t.i64("networks").unwrap_or(0);
+    let facilities = t.value("facilities").and_then(Value::as_array).cloned().unwrap_or_default();
+    let listed = t.i64("facilities_listed").unwrap_or(facilities.len() as i64);
+    let ipv6 = t.bool("ipv6") == Some(true);
+    card.title = name.clone();
+    let mut summary = format!("An exchange where {} peer", plural(networks, "network", "networks"));
+    match (&city, &country) {
+        (Some(c), Some(k)) => summary.push_str(&format!(", in {c}, {k}")),
+        (None, Some(k)) => summary.push_str(&format!(", in {k}")),
+        _ => {}
+    }
+    match facilities.len() {
+        0 => {}
+        1 => summary.push_str(&format!(", at {}", facilities[0].get("name").and_then(Value::as_str).unwrap_or("one facility"))),
+        n => summary.push_str(&format!(", present in {n} facilities")),
+    }
+    summary.push('.');
+    if ipv6 {
+        summary.push_str(" IPv6.");
+    }
+    card.summary = Some(summary);
+    let mut rows = Vec::new();
+    push(&mut rows, "Full name", long_name);
+    rows.push(row("Networks", num(networks as f64, 0)));
+    push(&mut rows, "Facilities listed", Some(listed.to_string()));
+    push(&mut rows, "City", city);
+    push(&mut rows, "Country", country);
+    push(&mut rows, "Continent", t.str("continent").map(str::to_string));
+    push(&mut rows, "Media", t.str("media").map(str::to_string));
+    push(&mut rows, "Service level", t.str("service_level").map(str::to_string));
+    push(&mut rows, "Terms", t.str("terms").map(str::to_string));
+    card.sections.extend(section(None, rows));
+    let where_rows: Vec<Row> = facilities
+        .iter()
+        .filter_map(|f| {
+            let n = f.get("name")?.as_str()?;
+            let op = f.get("operator").and_then(Value::as_str).unwrap_or("");
+            Some(row(n, op))
+        })
+        .collect();
+    card.sections.extend(section(Some("Facilities"), where_rows));
+    t.skip("peeringdb_id");
+    if let Some(u) = t.str("traffic_stats") {
+        card.links.push(Link { label: "Traffic statistics".into(), url: u.to_string() });
+    }
+    if let Some(u) = t.str("website") {
+        card.links.push(Link { label: "Exchange's site".into(), url: u.to_string() });
+    }
+    if let Some(u) = t.str("url") {
+        card.links.push(Link { label: "On PeeringDB".into(), url: u.to_string() });
+    }
+    card
+}
+
+// --- root servers ------------------------------------------------------------------
+
+pub fn root_server<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "DNS root server site (root-servers.org)");
+    let letter = t.str("letter").unwrap_or("?").to_string();
+    let town = t.str("town").unwrap_or("").to_string();
+    let country = t.str("country").map(str::to_string);
+    let operator = t.str("operator").map(str::to_string);
+    let instances = t.i64("instances").unwrap_or(1);
+    let asn = t.i64("asn");
+    let v4 = t.bool("ipv4") == Some(true);
+    let v6 = t.bool("ipv6") == Some(true);
+    card.title = format!("{letter}-root, {town}");
+    let mut summary = format!("An anycast site of the {letter} root server");
+    if let Some(o) = &operator {
+        summary.push_str(&format!(", run by {o}"));
+    }
+    summary.push_str(&format!(": {} here", plural(instances, "instance", "instances")));
+    match (&town, &country) {
+        (t, Some(c)) if !t.is_empty() => summary.push_str(&format!(" in {t}, {c}")),
+        (t, None) if !t.is_empty() => summary.push_str(&format!(" in {t}")),
+        _ => {}
+    }
+    summary.push_str(match (v4, v6) {
+        (true, true) => ", answering over IPv4 and IPv6.",
+        (true, false) => ", answering over IPv4 only.",
+        (false, true) => ", answering over IPv6 only.",
+        (false, false) => ".",
+    });
+    card.summary = Some(summary);
+    let mut rows = Vec::new();
+    rows.push(row("Root", format!("{letter}-root")));
+    push(&mut rows, "Operator", operator);
+    push(&mut rows, "AS number", asn.map(|a| format!("AS{a}")));
+    rows.push(row("Instances here", instances.to_string()));
+    push(&mut rows, "IPv4 address", t.str("address_v4").map(str::to_string));
+    push(&mut rows, "IPv6 address", t.str("address_v6").map(str::to_string));
+    push(&mut rows, "Country", country);
+    card.sections.extend(section(None, rows));
+    if let Some(u) = t.str("url") {
+        card.links.push(Link { label: format!("{letter}-root on root-servers.org"), url: u.to_string() });
+    }
+    card
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{card, Subject};
@@ -2476,5 +2634,20 @@ mod tests {
         assert_eq!(c.summary.as_deref(), Some("A probe connected since 15 Sep 01:02 UTC, in AS206238 (NL). At home, behind NAT, native IPv6."));
         assert_eq!(value(&c, "Network (IPv4)"), "AS206238");
         assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
+    }
+
+    #[test]
+    fn the_buildings_of_the_internet_read_as_who_is_there() {
+        let dc = present("data-centres", serde_json::json!({"name": "Equinix DC1-DC15,DC21-DC22 - Ashburn", "operator": "Equinix, Inc.", "address": "21715 Filigree Ct, Ashburn, VA, 20147-6205", "city": "Ashburn", "country": "US", "networks": 516, "exchanges": 9, "carriers": 30, "clli": "ASBNVA", "website": "http://www.equinix.com/", "peeringdb_id": 1, "url": "https://www.peeringdb.com/fac/1"}), "Equinix DC1-DC15,DC21-DC22 - Ashburn");
+        assert_eq!(dc.summary.as_deref(), Some("A data centre run by Equinix, Inc. in Ashburn, US, where 516 networks and 9 internet exchanges are present, with 30 carriers."));
+        assert!(dc.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{dc:#?}");
+        let ix = present("internet-exchanges", serde_json::json!({"name": "Equinix Ashburn", "long_name": "Equinix Internet Exchange Ashburn", "city": "Ashburn", "country": "US", "continent": "North America", "networks": 347, "facilities_listed": 3, "facilities": [{"name": "Equinix DC1", "city": "Ashburn", "operator": "Equinix, Inc."}, {"name": "Equinix DC2", "city": "Ashburn", "operator": "Equinix, Inc."}], "ipv6": true, "media": "Ethernet", "service_level": "24/7 Support", "terms": "Recurring Fees", "website": "https://ix.equinix.com", "traffic_stats": "https://ix.equinix.com/traffic", "peeringdb_id": 1, "url": "https://www.peeringdb.com/ix/1"}), "Equinix Ashburn");
+        assert_eq!(ix.summary.as_deref(), Some("An exchange where 347 networks peer, in Ashburn, US, present in 2 facilities. IPv6."));
+        assert_eq!(value(&ix, "Equinix DC1"), "Equinix, Inc.");
+        assert!(ix.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{ix:#?}");
+        let root = present("root-servers", serde_json::json!({"letter": "K", "operator": "RIPE NCC", "asn": 25152, "address_v4": "193.0.14.129", "address_v6": "2001:7fd::1", "town": "Accra", "country": "GH", "instances": 1, "ipv4": true, "ipv6": true, "url": "https://root-servers.org/root/K.html"}), "K-root, Accra");
+        assert_eq!(root.title, "K-root, Accra");
+        assert_eq!(root.summary.as_deref(), Some("An anycast site of the K root server, run by RIPE NCC: 1 instance here in Accra, GH, answering over IPv4 and IPv6."));
+        assert!(root.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{root:#?}");
     }
 }

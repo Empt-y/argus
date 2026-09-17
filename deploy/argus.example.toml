@@ -177,6 +177,15 @@ enabled = true    # BGP update rates per RIS collector from the RIS Live websock
 [sources.internet-probes]
 enabled = true    # RIPE Atlas probes and anchors with connection state, 17,000 rows every 30 min
 
+[sources.data-centres]
+enabled = true    # PeeringDB colocation facilities, 5,300 placed, weekly (6 MB)
+
+[sources.internet-exchanges]
+enabled = true    # PeeringDB internet exchanges placed through their facilities, weekly (8 MB)
+
+[sources.root-servers]
+enabled = true    # DNS root server anycast sites from root-servers.org, weekly
+
 # Keyed sources, off until a credential is supplied.
 [sources.buses]
 enabled = true

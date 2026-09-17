@@ -16,7 +16,7 @@ this box, and where did it reappear".
 This is a personal project and it is early, but it works end to end. As of
 September 2026:
 
-- A Rust daemon (`argusd`) polls 40 upstream feeds into 37 layers, with
+- A Rust daemon (`argusd`) polls 43 upstream feeds into 40 layers, with
   provider failover chains, per-provider budgets and a disk budget.
 - Postgres/PostGIS/TimescaleDB store with raw observations rolled up into
   tracks and daily summaries.
@@ -53,11 +53,13 @@ BGP visibility, active probing, darknet — drawn on the country, region or
 network's registered country it belongs to, and every BGP hijack, leak and
 look-alike GRIP flags, at the place the prefix lives, and the BGP update
 rate at each of RIPE's two dozen route collectors, from the RIS Live
-stream held open in the background, and the seventeen thousand RIPE Atlas
-probes with whether each is connected.
+stream held open in the background, the seventeen thousand RIPE Atlas
+probes with whether each is connected, the data centres and internet
+exchanges where networks meet (PeeringDB), and every anycast site of the
+thirteen DNS root servers.
 
-Not built yet: satellite imagery and fire detections, infrastructure layers
-(power grid, cables, BGP), SDR receivers, phone-as-sensor, the AR sky view.
+Not built yet: conflict and news, SDR receivers, phone-as-sensor, the AR
+sky view.
 See the roadmap at the bottom.
 
 ## How it fits together
@@ -190,7 +192,7 @@ steady-state figures from a weekday, before any TimescaleDB compression.
 | `argo-floats` | ~0.1 M | ~50 MB | 4,300 floats dated by poll time, hourly |
 | `seismographs` | < 0.1 M | ~10 MB | 6,200 stations dated by poll time, six-hourly |
 | `bgp-churn` | < 0.1 M | ~15 MB | 23 RIS collectors, one rate each per minute |
-| everything else | < 0.1 M | < 50 MB | buoys, meteors, quakes, alerts, SIGMETs, TfL, carbon intensity, AuroraWatch, IODA outages (~2,000 events a day, each with its outline), GRIP routing events, EMODnet, Open-Meteo lattices, cables, the grid, airports and food hygiene (features: written only on change; the hygiene register is 456,000 rows once, then only the ratings that changed) |
+| everything else | < 0.1 M | < 50 MB | buoys, meteors, quakes, alerts, SIGMETs, TfL, carbon intensity, AuroraWatch, IODA outages (~2,000 events a day, each with its outline), GRIP routing events, PeeringDB and root-server sites (features), EMODnet, Open-Meteo lattices, cables, the grid, airports and food hygiene (features: written only on change; the hygiene register is 456,000 rows once, then only the ratings that changed) |
 
 The dials, all in `argus.toml`:
 
@@ -249,7 +251,7 @@ that has been checked, what it actually returns, and what went wrong.
 | 5 | Android client | done |
 | 6 | Alerts, geofences, Tailscale | done |
 | 7 | Earth observation: imagery, fires, nightlights | done: fires, and GIBS imagery/night lights/SST/aerosol as DVR-dated overlays |
-| 8 | Infrastructure and internet: grid, cables, BGP | grid and cables done |
+| 8 | Infrastructure and internet: grid, cables, BGP | done: grid, cables, IODA outages, GRIP hijacks, RIS Live churn, Atlas probes, PeeringDB, root servers |
 | 9 | Conflict and news | |
 | 10 | Self-collected: SDR, phone-as-sensor | |
 | 11 | Derived analytics and AR sky view | |

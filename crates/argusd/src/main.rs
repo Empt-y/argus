@@ -730,6 +730,25 @@ fn build_sources(
             patient_http.clone(),
         )));
     }
+    // The buildings the internet is wired together in: PeeringDB's
+    // colocation facilities and the exchanges placed through them, and the
+    // anycast sites of the thirteen DNS root servers. Features, weekly.
+    let peeringdb = std::sync::Arc::new(argus_ingest::sources::peeringdb::Shared::new(patient_http.clone()));
+    if enabled("data-centres") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::PeeringDbFacilities::new(
+            peeringdb.clone(),
+        )));
+    }
+    if enabled("internet-exchanges") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::PeeringDbExchanges::new(
+            peeringdb.clone(),
+        )));
+    }
+    if enabled("root-servers") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::RootServers::new(
+            http.clone(),
+        )));
+    }
 
     // Fires (Phase 7): every VIIRS detection of the last day, worldwide,
     // every half hour. Keyed: the FIRMS MAP_KEY, which is not the

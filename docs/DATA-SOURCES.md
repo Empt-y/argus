@@ -541,6 +541,27 @@ tags each. Kind `station` on the fixture pattern (dated by poll,
 min because 17k rows a poll add up; key `atlas:{id}`. Addresses are not
 stored, the AS and prefix are.
 
+### PeeringDB exchanges and facilities — done
+`peeringdb.com/api/fac` (5.7 MB, 5,874 facilities, **610 without
+coordinates**), `/api/ix` (1.4 MB, 1,324 exchanges, **no coordinates at
+all**), `/api/ixfac` (927 KB, 4,541 presences). An exchange is placed through
+its facilities: 915 of 1,324 have a located one; 409 have none and are left
+unplaced. Several buildings → MultiPoint (the first MultiPoint feature in
+the store; `write_features` and the tiler take it as any geometry). All
+`status: ok`. CC0. Anonymous access is throttled; the three pulls are 10 s
+apart, weekly. Kind `feature`, keys `pdb:fac:{id}`, `pdb:ix:{id}`.
+
+### root-servers.org — done
+`root.json` is gone (404 with a trailing-slash redirect); the data is in
+`root-servers.org/map-data.js` (210 KB) as `const roots = new Map([...])`
+(13 letters: operator, addresses, ASN) and `const sites = [...]` (1,573
+rows: root, town, country, lat, lon, instances, ipv4, ipv6) — JSON once the
+brackets are matched. Rows repeat per instance in places (J-root Amsterdam
+is five rows at one coordinate) and town names are typed by hand ("Chicago"
+/ "CHICAGO", "Dar es Salaam" / "Dar Es Salaam"); co-located rows merge with
+instances summed and case-insensitive towns → 1,467 sites, 2,028 instances,
+keys unique. Kind `feature`, weekly, key `root:{letter}:{cc}:{town}[:n]`.
+
 ### NASA GIBS imagery overlays — done (not ingested)
 `gibs.earthdata.nasa.gov/wmts/epsg3857/best/{layer}/default/{YYYY-MM-DD}/{TileMatrixSet}/{z}/{y}/{x}.{jpg|png}`,
 keyless, public domain, CORS on. Served as a catalogue at `/v1/overlays` and as
@@ -642,8 +663,9 @@ Easiest first, roughly most reusable first:
 20. Phase 8, the internet — the geolocation step is RIPEstat (`geoloc` for
     a prefix, `rir-stats-country` for an AS): ~~IODA outages~~ — done,
     ~~GRIP hijacks~~ — done, ~~RIS Live churn per collector~~ — done,
-    ~~RIPE Atlas probes~~ — done. Then PeeringDB exchanges and facilities,
-    root-server sites.
+    ~~RIPE Atlas probes~~ — done, ~~PeeringDB exchanges and facilities~~ —
+    done, ~~root-server sites~~ — done. **Phase 8 is complete.** Next: Phase
+    9, conflict and news.
 
 ## Process notes
 
