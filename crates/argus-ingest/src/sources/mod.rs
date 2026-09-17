@@ -6,6 +6,7 @@
 //! each driver be tested against a captured fixture with no network.
 
 pub mod argo;
+pub mod aurorawatch;
 pub mod bods;
 pub mod cables;
 pub mod carbon;
@@ -39,6 +40,7 @@ pub mod usgs;
 pub mod wspr;
 
 pub use argo::ArgoFloats;
+pub use aurorawatch::AuroraWatch;
 pub use bods::Buses;
 pub use cables::SubmarineCables;
 pub use carbon::CarbonIntensity;

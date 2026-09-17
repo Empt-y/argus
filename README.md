@@ -16,7 +16,7 @@ this box, and where did it reappear".
 This is a personal project and it is early, but it works end to end. As of
 September 2026:
 
-- A Rust daemon (`argusd`) polls 35 upstream feeds into 32 layers, with
+- A Rust daemon (`argusd`) polls 36 upstream feeds into 33 layers, with
   provider failover chains, per-provider budgets and a disk budget.
 - Postgres/PostGIS/TimescaleDB store with raw observations rolled up into
   tracks and daily summaries.
@@ -45,8 +45,10 @@ and plants — from OpenStreetMap, every active fire the VIIRS satellites
 saw in the last day (NASA FIRMS, keyed), every fireball seen from orbit
 since 1988 (CNEOS), every airfield in the world with its runways
 (OurAirports), every HF radio path open right now as the WSPR beacon
-network hears it (wspr.live), and every inspected food business in the UK
-with its hygiene rating (Food Standards Agency).
+network hears it (wspr.live), every inspected food business in the UK
+with its hygiene rating (Food Standards Agency), and the magnetometers
+behind the AuroraWatch UK aurora alert, with the alert level at the
+instrument that decides it.
 
 Not built yet: satellite imagery and fire detections, infrastructure layers
 (power grid, cables, BGP), SDR receivers, phone-as-sensor, the AR sky view.
@@ -180,7 +182,7 @@ steady-state figures from a weekday, before any TimescaleDB compression.
 | `street-crime` | ~0.2 M | ~0.1 GB | half a million crimes a month across England and Wales, rewritten every three days |
 | `argo-floats` | ~0.1 M | ~50 MB | 4,300 floats dated by poll time, hourly |
 | `seismographs` | < 0.1 M | ~10 MB | 6,200 stations dated by poll time, six-hourly |
-| everything else | < 0.1 M | < 50 MB | buoys, meteors, quakes, alerts, SIGMETs, TfL, carbon intensity, EMODnet, Open-Meteo lattices, cables, the grid, airports and food hygiene (features: written only on change; the hygiene register is 456,000 rows once, then only the ratings that changed) |
+| everything else | < 0.1 M | < 50 MB | buoys, meteors, quakes, alerts, SIGMETs, TfL, carbon intensity, AuroraWatch, EMODnet, Open-Meteo lattices, cables, the grid, airports and food hygiene (features: written only on change; the hygiene register is 456,000 rows once, then only the ratings that changed) |
 
 The dials, all in `argus.toml`:
 

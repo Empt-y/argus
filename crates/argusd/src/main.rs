@@ -687,6 +687,13 @@ fn build_sources(
             http.clone(),
         )));
     }
+    // AuroraWatch UK's magnetometers: the aurora alert people follow,
+    // placed at the instrument that decides it, every fifteen minutes.
+    if enabled("geomagnetic-activity") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::AuroraWatch::new(
+            http.clone(),
+        )));
+    }
 
     // Fires (Phase 7): every VIIRS detection of the last day, worldwide,
     // every half hour. Keyed: the FIRMS MAP_KEY, which is not the

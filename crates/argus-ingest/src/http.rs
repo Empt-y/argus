@@ -181,6 +181,19 @@ impl HttpClient {
     }
 
     async fn get_page_with(&self, url: &str, extra: &[(&str, &str)]) -> Result<Page, SourceError> {
+        self.fetch(url, extra, false).await?.ok_or_else(|| SourceError::Transport("upstream returned 404 Not Found".into()))
+    }
+
+    /// GET a document that may legitimately not exist: `None` on a 404,
+    /// every other failure an error as usual. For the upstream where the
+    /// register names more things than publish — AuroraWatch defines 26
+    /// magnetometers and five of them have an activity document — so a
+    /// missing one is a fact about the site, not a failed poll.
+    pub async fn get_bytes_if_present(&self, url: &str) -> Result<Option<Vec<u8>>, SourceError> {
+        Ok(self.fetch(url, &[], true).await?.map(|p| p.body))
+    }
+
+    async fn fetch(&self, url: &str, extra: &[(&str, &str)], absent_is_none: bool) -> Result<Option<Page>, SourceError> {
         self.pace(url).await;
         let mut request = self.inner.get(url);
         for (name, value) in extra {
@@ -192,6 +205,9 @@ impl HttpClient {
             .map_err(|e| SourceError::Transport(describe(&e)))?;
 
         let status = response.status();
+        if absent_is_none && status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             let retry_after = response
                 .headers()
@@ -241,7 +257,7 @@ impl HttpClient {
             }
             buf.extend_from_slice(&chunk);
         }
-        Ok(Page { body: buf, headers })
+        Ok(Some(Page { body: buf, headers }))
     }
 
     /// GET and deserialise JSON.

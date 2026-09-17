@@ -1805,6 +1805,95 @@ pub fn food_hygiene<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, use
     card
 }
 
+// --- geomagnetic activity -------------------------------------------------------
+
+/// The AuroraWatch levels in their own words, from `status-descriptions.xml`.
+fn aurora_words(status: &str) -> (&'static str, &'static str) {
+    match status {
+        "green" => ("No significant activity", "Aurora is unlikely to be visible by eye or camera from anywhere in the UK."),
+        "yellow" => ("Minor geomagnetic activity", "Aurora may be visible by eye from Scotland and by camera from Scotland, northern England and Northern Ireland."),
+        "amber" => ("Amber alert: possible aurora", "Aurora is likely to be visible by eye from Scotland, northern England and Northern Ireland, possibly elsewhere in the UK; photographs are likely from anywhere in the UK."),
+        "red" => ("Red alert: aurora likely", "Aurora is likely to be visible by eye and camera from anywhere in the UK."),
+        _ => ("Unknown level", ""),
+    }
+}
+
+pub fn geomagnetic<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "Magnetometer (AuroraWatch UK)");
+    let location = t.str("location").map(|l| l.trim_end_matches(", UK").to_string()).unwrap_or_else(|| subject.key.to_string());
+    let site = t.str("site").unwrap_or("").to_string();
+    let nt = t.f64("activity_nt");
+    let status = t.str("status").unwrap_or("").to_string();
+    let hour = t.str("hour").and_then(when);
+    let peak = t.f64("peak_24h_nt");
+    let alerting = t.bool("alerting") == Some(true);
+    let alert_level = t.str("alert_level").map(str::to_string);
+    let until = t.str("until").map(str::to_string);
+
+    card.title = if site.is_empty() { location.clone() } else { format!("{location} ({site})") };
+    let (level_words, meaning) = aurora_words(&status);
+    let mut summary = match nt {
+        Some(v) => format!("Geomagnetic disturbance {} nT in the hour from {}: {}", num(v, 1), hour.clone().unwrap_or_else(|| "now".into()), level_words.to_lowercase()),
+        None => level_words.to_string(),
+    };
+    if let Some(p) = peak.filter(|p| nt.is_some_and(|n| *p > n)) {
+        summary.push_str(&format!(", peaking at {} nT in the last day", num(p, 1)));
+    }
+    summary.push('.');
+    if alerting {
+        let level = alert_level.clone().unwrap_or_else(|| status.clone());
+        let (_, m) = aurora_words(&level);
+        summary.push_str(&format!(" This is the instrument that sets the AuroraWatch UK alert, currently {level}. {m}"));
+    } else if !meaning.is_empty() {
+        summary.push_str(&format!(" {meaning}"));
+    }
+    if until.is_some() {
+        summary.push_str(" The site is closed.");
+    }
+    card.summary = Some(summary);
+
+    let mut rows = Vec::new();
+    push(&mut rows, "Activity", nt.map(|v| format!("{} nT", num(v, 1))));
+    rows.push(row_note("Level", status.clone(), level_words));
+    push(&mut rows, "Hour", hour);
+    push(&mut rows, "Peak, last 24 h", peak.map(|p| format!("{} nT", num(p, 1))));
+    if alerting {
+        push(&mut rows, "AuroraWatch UK alert", alert_level);
+    }
+    push(&mut rows, "Project", t.str("project").map(str::to_string));
+    push(&mut rows, "About", t.str("description").map(str::to_string));
+    push(&mut rows, "Since", t.str("since").and_then(|s| when(s).or_else(|| Some(s.to_string()))));
+    push(&mut rows, "Closed", until.and_then(|s| when(&s).or(Some(s))));
+    card.sections.extend(section(None, rows));
+
+    if let Some(th) = t.value("thresholds_nt").and_then(|v| v.as_array()) {
+        let rows: Vec<Row> = th
+            .iter()
+            .filter_map(|x| Some(row(x.get("status")?.as_str()?, format!("from {} nT", num(x.get("from_nt")?.as_f64()?, 0)))))
+            .collect();
+        card.sections.extend(section(Some("Alert thresholds"), rows));
+    }
+    if let Some(hours) = t.value("hours").and_then(|v| v.as_array()) {
+        // Newest first, the way a person checks whether it is rising.
+        let rows: Vec<Row> = hours
+            .iter()
+            .rev()
+            .filter_map(|h| {
+                let stamp = h.get("hour")?.as_str()?;
+                let label = when(stamp).unwrap_or_else(|| stamp.to_string());
+                Some(row(label, format!("{} nT, {}", num(h.get("nt")?.as_f64()?, 1), h.get("status")?.as_str()?)))
+            })
+            .collect();
+        card.sections.extend(section(Some("Last 24 hours"), rows));
+    }
+    if let Some(u) = t.str("url") {
+        card.links.push(Link { label: "Summary plots".into(), url: u.to_string() });
+    }
+    card.links.push(Link { label: "AuroraWatch UK".into(), url: "https://aurorawatch.lancs.ac.uk/".into() });
+    card
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{card, Subject};
@@ -2026,5 +2115,21 @@ mod tests {
 
         let waiting = present("food-hygiene", serde_json::json!({"name": "CAFFI CYMRU", "scheme": "FHRS", "rating": "awaiting_inspection", "authority": "Gwynedd", "fhrsid": "56", "url": "https://ratings.food.gov.uk/business/56"}), "CAFFI CYMRU");
         assert_eq!(waiting.summary.as_deref(), Some("Awaiting inspection by Gwynedd, so no rating yet."));
+    }
+
+    #[test]
+    fn the_alerting_magnetometer_reads_as_the_national_aurora_alert() {
+        let c = present("geomagnetic-activity", serde_json::json!({"site": "SUM", "location": "Sumburgh Head, UK", "project": "AWN", "description": "Raspberry Pi magnetometer system.", "since": "2017-08-01T00:00", "activity_nt": 33.7, "hour": "2026-09-17T11:00:00Z", "status": "green", "peak_24h_nt": 78.6, "alerting": true, "alert_level": "green", "thresholds_nt": [{"status": "green", "from_nt": 0.0}, {"status": "yellow", "from_nt": 50.0}], "hours": [{"hour": "2026-09-17T10:00:00Z", "nt": 78.6, "status": "yellow"}, {"hour": "2026-09-17T11:00:00Z", "nt": 33.7, "status": "green"}], "url": "https://aurorawatch.lancs.ac.uk/summary/awn/sum/"}), "Sumburgh Head");
+        assert_eq!(c.title, "Sumburgh Head (SUM)");
+        assert_eq!(c.summary.as_deref(), Some("Geomagnetic disturbance 33.7 nT in the hour from 17 Sep 11:00 UTC: no significant activity, peaking at 78.6 nT in the last day. This is the instrument that sets the AuroraWatch UK alert, currently green. Aurora is unlikely to be visible by eye or camera from anywhere in the UK."));
+        assert_eq!(value(&c, "AuroraWatch UK alert"), "green");
+        assert_eq!(value(&c, "yellow"), "from 50 nT");
+        let last = c.sections.iter().find(|s| s.heading.as_deref() == Some("Last 24 hours")).unwrap();
+        assert_eq!(last.rows[0].value, "33.7 nT, green", "newest first");
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
+
+        let closed = present("geomagnetic-activity", serde_json::json!({"site": "SID", "location": "Sidmouth, UK", "project": "AWN", "activity_nt": 13.7, "hour": "2018-08-12T09:00:00Z", "status": "green", "peak_24h_nt": 13.7, "until": "2018-09-01T00:00", "hours": []}), "Sidmouth");
+        assert!(closed.summary.as_deref().unwrap().ends_with("The site is closed."), "{:?}", closed.summary);
+        assert!(closed.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{closed:#?}");
     }
 }

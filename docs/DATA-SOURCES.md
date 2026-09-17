@@ -464,6 +464,23 @@ changes nightly (the extract date) goes in the attrs or every row would
 re-version every week. A business that leaves the register stays as its
 last version, like a closed airfield.
 
+### AuroraWatch UK — done
+`aurorawatch-api.lancs.ac.uk/0.2/status/all-site-status.xml` names the
+alerting site and its level (`green|yellow|amber|red`);
+`0.2/project/{awn,samnet,bgs_sch}.xml` define 26 magnetometer sites with
+coordinates; `0.2/status/project/{project}/{site}-activity.xml` is a site's
+last 24 hourly values in nT with thresholds (50/100/200) — and exists for
+**five of the 26** (404 for the rest, hence `HttpClient::get_bytes_if_present`).
+Of the five, only Sumburgh Head (`SUM`, the alerting site) was current;
+Crooktree was a month stale, `LAN1` two years, `SID` eight. Timestamps are
+`2026-09-17T11:59:59+0000` — an offset without a colon, which RFC 3339
+parsing refuses. `LAN2` exists in both SAMNET and the BGS schools project, so
+the key carries the project. Kind `station`, every 15 min, observed-at = the
+document's `updated` (its assembly time; the newest hour's value is a running
+one, revised through the hour). The "national scalar"
+is therefore spatial after all: it is the reading at the instrument that
+decides it, and the card says so. CC BY-NC-SA 3.0. HTTP only.
+
 ### NASA GIBS imagery overlays — done (not ingested)
 `gibs.earthdata.nasa.gov/wmts/epsg3857/best/{layer}/default/{YYYY-MM-DD}/{TileMatrixSet}/{z}/{y}/{x}.{jpg|png}`,
 keyless, public domain, CORS on. Served as a catalogue at `/v1/overlays` and as
@@ -499,8 +516,8 @@ tile. Each product carries its `lag_days` in the catalogue.
 - Also: PSKReporter (filter by band/mode; callsign queries return an empty
   envelope), FSA food hygiene, Helioviewer (solar imagery), OurAirports
   (86,021 rows, public domain), Safecast (radiation, but London samples were
-  over a year old), AuroraWatch UK, NOAA CO-OPS tides (US only), OSM notes.
-  OurAirports and FSA food hygiene are built (above).
+  over a year old), NOAA CO-OPS tides (US only), OSM notes. OurAirports, FSA
+  food hygiene and AuroraWatch UK are built (above).
 
 ## Promising, unverified
 
@@ -560,8 +577,9 @@ Easiest first, roughly most reusable first:
 17. ~~wspr.live~~ — done, aggregated per path in ClickHouse.
 18. ~~Phase 7 imagery and night lights~~ — done as GIBS overlays, not
     ingested. ~~FSA food hygiene~~ — done.
-19. Left on the keyless list: AuroraWatch UK (a national scalar, not
-    spatial). Phase 8: BGP needs a geolocation step before it is spatial.
+19. ~~AuroraWatch UK~~ — done, placed at the alerting magnetometer.
+    The keyless list is empty. Phase 8: BGP needs a geolocation step before
+    it is spatial.
 
 ## Process notes
 

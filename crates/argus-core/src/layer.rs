@@ -272,6 +272,14 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#5cb85c".into();
         s.min_zoom = 12;
     }),
+    ("geomagnetic-activity", |s| {
+        // A handful of magnetometers, one of them the national aurora
+        // alert. From z0 like the quakes: it is the whole country's sky.
+        // Aurora green.
+        s.geometry = GeometryClass::Point;
+        s.color = "#7ef9a0".into();
+        s.min_zoom = 0;
+    }),
     ("ground-stations", |s| {
         // Four and a half thousand worldwide, most of them dark, so from
         // z3 — the question is where the network can hear from, asked of a

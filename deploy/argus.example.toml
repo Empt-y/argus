@@ -162,6 +162,9 @@ enabled = true    # OurAirports: every airfield and heliport with runways, world
 [sources.food-hygiene]
 enabled = true    # FSA food hygiene ratings: every inspected food business in the UK, weekly (363 files, 575 MB)
 
+[sources.geomagnetic-activity]
+enabled = true    # AuroraWatch UK magnetometers and the aurora alert level, every 15 min
+
 # Keyed sources, off until a credential is supplied.
 [sources.buses]
 enabled = true
