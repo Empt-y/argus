@@ -452,7 +452,11 @@ later than yesterday (today's product is still being assembled). Built:
 (Level9), `VIIRS_SNPP_DayNightBand_At_Sensor_Radiance` (Level8),
 `GHRSST_L4_MUR_Sea_Surface_Temperature` (Level7), `MODIS_Terra_Aerosol_Optical_Depth_3km`
 (Level6). `VIIRS_Black_Marble` and `VIIRS_SNPP_Thermal_Anomalies_375m_All` 404
-on this endpoint. Note the WMTS path order is `{z}/{y}/{x}`.
+on this endpoint. Note the WMTS path order is `{z}/{y}/{x}`. Products
+publish on their own lag: the swath products are whole the day after, but
+MUR SST is two days behind (`<Default>` in `1.0.0/WMTSCapabilities.xml`
+names each product's newest day), and asking for yesterday 404s on every
+tile. Each product carries its `lag_days` in the catalogue.
 
 ### Others, verified keyless
 - **TfL Unified API** — keyless line status and bus arrivals with vehicle
@@ -533,10 +537,10 @@ Easiest first, roughly most reusable first:
 15. ~~CNEOS fireballs, OurAirports~~ — done.
 16. ~~Open-Meteo flood~~ — done, sampled at the EA gauges.
 17. ~~wspr.live~~ — done, aggregated per path in ClickHouse.
-18. Left on the keyless list: AuroraWatch UK (a national scalar, not
-    spatial), FSA food hygiene. Phase 7
-    still unbuilt: imagery, nightlights. Phase 8: BGP needs a geolocation
-    step before it is spatial.
+18. ~~Phase 7 imagery and night lights~~ — done as GIBS overlays, not
+    ingested. Left on the keyless list: FSA food hygiene, AuroraWatch UK (a
+    national scalar, not spatial). Phase 8: BGP needs a geolocation step
+    before it is spatial.
 
 ## Process notes
 
