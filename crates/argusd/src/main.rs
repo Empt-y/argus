@@ -717,6 +717,12 @@ fn build_sources(
             ripestat.clone(),
         )));
     }
+    // The BGP update rate at each RIS collector, from the RIS Live
+    // websocket held open in the background: the internet's pulse, taken
+    // at two dozen exchanges, once a minute.
+    if enabled("bgp-churn") {
+        sources.push(std::sync::Arc::new(argus_ingest::sources::RisLive::new()));
+    }
 
     // Fires (Phase 7): every VIIRS detection of the last day, worldwide,
     // every half hour. Keyed: the FIRMS MAP_KEY, which is not the

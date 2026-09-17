@@ -16,7 +16,7 @@ this box, and where did it reappear".
 This is a personal project and it is early, but it works end to end. As of
 September 2026:
 
-- A Rust daemon (`argusd`) polls 38 upstream feeds into 35 layers, with
+- A Rust daemon (`argusd`) polls 39 upstream feeds into 36 layers, with
   provider failover chains, per-provider budgets and a disk budget.
 - Postgres/PostGIS/TimescaleDB store with raw observations rolled up into
   tracks and daily summaries.
@@ -51,7 +51,9 @@ behind the AuroraWatch UK aurora alert, with the alert level at the
 instrument that decides it, and every internet outage IODA detects —
 BGP visibility, active probing, darknet — drawn on the country, region or
 network's registered country it belongs to, and every BGP hijack, leak and
-look-alike GRIP flags, at the place the prefix lives.
+look-alike GRIP flags, at the place the prefix lives, and the BGP update
+rate at each of RIPE's two dozen route collectors, from the RIS Live
+stream held open in the background.
 
 Not built yet: satellite imagery and fire detections, infrastructure layers
 (power grid, cables, BGP), SDR receivers, phone-as-sensor, the AR sky view.
@@ -185,6 +187,7 @@ steady-state figures from a weekday, before any TimescaleDB compression.
 | `street-crime` | ~0.2 M | ~0.1 GB | half a million crimes a month across England and Wales, rewritten every three days |
 | `argo-floats` | ~0.1 M | ~50 MB | 4,300 floats dated by poll time, hourly |
 | `seismographs` | < 0.1 M | ~10 MB | 6,200 stations dated by poll time, six-hourly |
+| `bgp-churn` | < 0.1 M | ~15 MB | 23 RIS collectors, one rate each per minute |
 | everything else | < 0.1 M | < 50 MB | buoys, meteors, quakes, alerts, SIGMETs, TfL, carbon intensity, AuroraWatch, IODA outages (~2,000 events a day, each with its outline), GRIP routing events, EMODnet, Open-Meteo lattices, cables, the grid, airports and food hygiene (features: written only on change; the hygiene register is 456,000 rows once, then only the ratings that changed) |
 
 The dials, all in `argus.toml`:

@@ -171,6 +171,9 @@ enabled = true    # IODA internet outages on country/region outlines, every 10 m
 [sources.bgp-incidents]
 enabled = true    # GRIP BGP hijacks and leaks (suspicion >= 20) at the prefix's location, every 10 min
 
+[sources.bgp-churn]
+enabled = true    # BGP update rates per RIS collector from the RIS Live websocket (~4,600 msg/s parsed, held open), every minute
+
 # Keyed sources, off until a credential is supplied.
 [sources.buses]
 enabled = true

@@ -298,6 +298,14 @@ static OVERRIDES: &[(&str, Override)] = &[
         s.color = "#e040fb".into();
         s.min_zoom = 0;
     }),
+    ("bgp-churn", |s| {
+        // Twenty-three collectors at the world's exchanges, each a rate.
+        // From z0; the pattern across continents is the reading. A cool
+        // violet, the colour of a pulse trace.
+        s.geometry = GeometryClass::Point;
+        s.color = "#9c8cff".into();
+        s.min_zoom = 0;
+    }),
     ("ground-stations", |s| {
         // Four and a half thousand worldwide, most of them dark, so from
         // z3 — the question is where the network can hear from, asked of a

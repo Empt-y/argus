@@ -515,6 +515,21 @@ the layer keeps suspicion ≥ 20. Placed by RIPEstat `geoloc` of
 `summary.prefixes[0]` (445 distinct in 500 events). Kind `event`, 10 min,
 key `grip:{id}`, dated `view_ts`. Non-commercial with attribution.
 
+### RIPE RIS Live — done, as a rate per collector
+`wss://ris-live.ripe.net/v1/ws/?client=<name>`, subscribe with
+`{"type":"ris_subscribe","data":{"type":"UPDATE"}}`. Measured unfiltered:
+**4,580 messages/s**, 207,097 prefix announcements, 6,679 withdrawals and
+88,592 distinct prefixes in 20 s from 23 collectors (RRC25 and RRC23 the
+loudest). Not storable per prefix and not geolocatable at that rate; what
+is kept is the rate per collector — updates, prefixes announced and
+withdrawn, peers heard, per minute. Collector positions are a table at city
+precision (`stat.ripe.net/data/rrc-info` names the city and exchange but has
+no coordinates; RRC02/08/09 are deactivated). The socket is held open by a
+background task with 5 s→5 min reconnect backoff; five minutes of silence
+fails the poll. Kind `measure`, every minute, key `ris:rrc01`. Frames are
+parsed by `serde_json` into a struct of the five fields the tally needs;
+CPU cost noted in the commit message that landed it.
+
 ### NASA GIBS imagery overlays — done (not ingested)
 `gibs.earthdata.nasa.gov/wmts/epsg3857/best/{layer}/default/{YYYY-MM-DD}/{TileMatrixSet}/{z}/{y}/{x}.{jpg|png}`,
 keyless, public domain, CORS on. Served as a catalogue at `/v1/overlays` and as
@@ -615,8 +630,9 @@ Easiest first, roughly most reusable first:
     The keyless list is empty.
 20. Phase 8, the internet — the geolocation step is RIPEstat (`geoloc` for
     a prefix, `rir-stats-country` for an AS): ~~IODA outages~~ — done,
-    ~~GRIP hijacks~~ — done. Then RIS Live churn per collector, RIPE Atlas
-    probes, PeeringDB exchanges and facilities, root-server sites.
+    ~~GRIP hijacks~~ — done, ~~RIS Live churn per collector~~ — done.
+    Then RIPE Atlas probes, PeeringDB exchanges and facilities, root-server
+    sites.
 
 ## Process notes
 

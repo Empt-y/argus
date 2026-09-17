@@ -2072,6 +2072,52 @@ pub fn bgp_incident<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, use
     card
 }
 
+// --- BGP churn --------------------------------------------------------------------
+
+pub fn bgp_churn<'a>(subject: Subject<'a>, attrs: &'a Map<String, Value>, used: &mut Vec<&'a str>) -> Card {
+    let mut t = Take::new(attrs, used);
+    let mut card = base(subject, "RIS route collector (RIPE NCC RIS Live)");
+    let collector = t.str("collector").unwrap_or(subject.key).to_string();
+    let city = t.str("city").unwrap_or("").to_string();
+    let ixp = t.str("ixp").unwrap_or("").to_string();
+    let updates = t.f64("updates_per_min");
+    let announced = t.f64("announced_per_min");
+    let withdrawn = t.f64("withdrawn_per_min");
+    let peers = t.i64("peers_heard");
+    let window = t.i64("window_s");
+    card.title = if city.is_empty() { collector.clone() } else { format!("{collector}, {city}") };
+    let mut summary = collector.clone();
+    if !ixp.is_empty() {
+        summary.push_str(&format!(" at {ixp}"));
+    }
+    if let Some(u) = updates {
+        summary.push_str(&format!(" heard {} BGP updates a minute", num(u, 0)));
+    }
+    if let Some(p) = peers {
+        summary.push_str(&format!(" from {p} peer{}", if p == 1 { "" } else { "s" }));
+    }
+    if let (Some(a), Some(w)) = (announced, withdrawn) {
+        summary.push_str(&format!(": {} prefixes announced and {} withdrawn", num(a, 0), num(w, 0)));
+    }
+    summary.push('.');
+    card.summary = Some(summary);
+    let mut rows = Vec::new();
+    push(&mut rows, "Updates", updates.map(|u| format!("{} / min", num(u, 0))));
+    push(&mut rows, "Prefixes announced", announced.map(|a| format!("{} / min", num(a, 0))));
+    push(&mut rows, "Prefixes withdrawn", withdrawn.map(|w| format!("{} / min", num(w, 0))));
+    push(&mut rows, "Peers heard", peers.map(|p| p.to_string()));
+    push(&mut rows, "Exchange", Some(ixp).filter(|s| !s.is_empty()));
+    push(&mut rows, "Window", window.map(duration));
+    t.skip("updates");
+    t.skip("announced_prefixes");
+    t.skip("withdrawn_prefixes");
+    card.sections.extend(section(None, rows));
+    if let Some(u) = t.str("url") {
+        card.links.push(Link { label: "Live stream from this collector".into(), url: u.to_string() });
+    }
+    card
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{card, Subject};
@@ -2332,5 +2378,13 @@ mod tests {
         let moas = present("bgp-incidents", serde_json::json!({"event_type": "moas", "suspicion": 30, "labels": ["suspicious"], "prefixes": ["23.226.128.0/24"], "victims": [], "attackers": [{"asn": 204966}, {"asn": 154132}], "newcomers": [{"asn": 204966}, {"asn": 154132}], "place": "US", "finished": "2026-09-17T13:35:00Z"}), "MOAS 23.226.128.0/24");
         assert_eq!(moas.summary.as_deref(), Some("The same prefix announced by two origin networks at once, on 23.226.128.0/24, also announced by AS204966. GRIP's suspicion 30/100, labelled suspicious. The prefix is placed at US. Over."));
         assert!(moas.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{moas:#?}");
+    }
+
+    #[test]
+    fn a_collector_reads_as_its_rate() {
+        let c = present("bgp-churn", serde_json::json!({"collector": "RRC01", "city": "London", "ixp": "LINX / LONAP", "window_s": 60, "updates": 2300, "updates_per_min": 2300.0, "announced_prefixes": 1900, "announced_per_min": 1900.0, "withdrawn_prefixes": 60, "withdrawn_per_min": 60.0, "peers_heard": 136, "url": "https://ris-live.ripe.net/?host=rrc01.ripe.net"}), "RRC01 — London");
+        assert_eq!(c.title, "RRC01, London");
+        assert_eq!(c.summary.as_deref(), Some("RRC01 at LINX / LONAP heard 2,300 BGP updates a minute from 136 peers: 1,900 prefixes announced and 60 withdrawn."));
+        assert!(c.sections.iter().all(|s| s.heading.as_deref() != Some("Also")), "{c:#?}");
     }
 }
