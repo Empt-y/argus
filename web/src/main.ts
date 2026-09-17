@@ -254,7 +254,7 @@ async function main(): Promise<void> {
   // Exposed for the console and for the headless smoke test. Not a public
   // interface — nothing in the client reads it.
   Object.assign(window, {
-    argus: { viewer, renderer, stream, api, card, sensors, geo: { loadGeoid, geoidReady, undulationM, resolveHeight } },
+    argus: { viewer, renderer, stream, api, card, sensors, overlays, geo: { loadGeoid, geoidReady, undulationM, resolveHeight } },
   });
 }
 

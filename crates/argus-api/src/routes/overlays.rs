@@ -40,6 +40,11 @@ struct Product {
     /// The first day the product exists, so a rewind past it gets nothing
     /// rather than a 404 per tile.
     since: (i32, u32, u32),
+    /// How many days behind today the newest complete day is. The swath
+    /// products are whole the day after; the MUR analysis blends a day
+    /// either side of its target and publishes two days late, and asking
+    /// for yesterday's 404s on every tile.
+    lag_days: i64,
 }
 
 const PRODUCTS: &[Product] = &[
@@ -53,6 +58,7 @@ const PRODUCTS: &[Product] = &[
         format: "jpg",
         opacity: 1.0,
         since: (2000, 2, 24),
+        lag_days: 1,
     },
     Product {
         id: "viirs-true-colour",
@@ -64,6 +70,7 @@ const PRODUCTS: &[Product] = &[
         format: "jpg",
         opacity: 1.0,
         since: (2015, 11, 24),
+        lag_days: 1,
     },
     Product {
         id: "night-lights",
@@ -75,6 +82,7 @@ const PRODUCTS: &[Product] = &[
         format: "png",
         opacity: 1.0,
         since: (2016, 11, 30),
+        lag_days: 1,
     },
     Product {
         id: "sea-surface-temperature",
@@ -86,6 +94,7 @@ const PRODUCTS: &[Product] = &[
         format: "png",
         opacity: 0.7,
         since: (2002, 6, 1),
+        lag_days: 2,
     },
     Product {
         id: "aerosol",
@@ -97,6 +106,7 @@ const PRODUCTS: &[Product] = &[
         format: "png",
         opacity: 0.7,
         since: (2000, 2, 24),
+        lag_days: 1,
     },
 ];
 
@@ -129,21 +139,29 @@ pub struct OverlaysResponse {
     pub overlays: Vec<OverlayView>,
 }
 
-/// The day a product is asked for: the instant's date, but never later
+/// The day the overlays are asked for: the instant's date, but never later
 /// than yesterday, because today's product is still being assembled.
 pub fn day_for(at: Option<chrono::DateTime<Utc>>) -> NaiveDate {
     let latest = (Utc::now() - Duration::days(1)).date_naive();
     at.map(|t| t.date_naive()).unwrap_or(latest).min(latest)
 }
 
+/// The day one product can actually serve for that day: the same, unless
+/// the product publishes later than the day after, in which case it is
+/// the newest day it has.
+fn product_day(p: &Product, day: NaiveDate) -> NaiveDate {
+    day.min((Utc::now() - Duration::days(p.lag_days)).date_naive())
+}
+
 pub fn overlays_for(day: NaiveDate) -> Vec<OverlayView> {
     PRODUCTS
         .iter()
-        .filter(|p| {
+        .map(|p| (p, product_day(p, day)))
+        .filter(|(p, day)| {
             let (y, m, d) = p.since;
-            NaiveDate::from_ymd_opt(y, m, d).is_some_and(|since| day >= since)
+            NaiveDate::from_ymd_opt(y, m, d).is_some_and(|since| *day >= since)
         })
-        .map(|p| OverlayView {
+        .map(|(p, day)| OverlayView {
             id: p.id.into(),
             name: p.name.into(),
             description: p.description.into(),
@@ -183,6 +201,20 @@ mod tests {
         assert_eq!(day_for(Some(Utc::now())), yesterday, "today is still being assembled");
         let tuesday: chrono::DateTime<Utc> = "2026-09-08T14:00:00Z".parse().unwrap();
         assert_eq!(day_for(Some(tuesday)), NaiveDate::from_ymd_opt(2026, 9, 8).unwrap());
+    }
+
+    #[test]
+    fn a_product_that_publishes_late_is_dated_to_its_newest_day_not_yesterdays() {
+        let yesterday = day_for(None);
+        let all = overlays_for(yesterday);
+        let sst = all.iter().find(|o| o.id == "sea-surface-temperature").unwrap();
+        assert_eq!(sst.date, yesterday - Duration::days(1), "MUR is two days behind");
+        assert!(sst.tiles.contains(&sst.date.format("%Y-%m-%d").to_string()));
+        let night = all.iter().find(|o| o.id == "night-lights").unwrap();
+        assert_eq!(night.date, yesterday);
+        // A rewind well into the past is the same day for every product.
+        let tuesday = NaiveDate::from_ymd_opt(2026, 9, 8).unwrap();
+        assert!(overlays_for(tuesday).iter().all(|o| o.date == tuesday));
     }
 
     #[test]

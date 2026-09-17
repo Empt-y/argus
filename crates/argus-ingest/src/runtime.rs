@@ -163,7 +163,10 @@ impl Runtime {
                 let mut state = SourceState::default();
                 loop {
                     let (outcome, retry_after) =
-                        poll_and_store(&store, &source, &mut state, &aois).await;
+                        poll_and_store(&store, &source, &mut state, &aois, &cancel).await;
+                    if cancel.is_cancelled() {
+                        return;
+                    }
 
                     if !state.should_continue() {
                         tracing::warn!(
@@ -210,15 +213,31 @@ impl Runtime {
 
 /// One poll, stored, with health folded in. Returns what happened and any
 /// upstream-supplied retry hint.
+///
+/// The upstream phase races the cancel token: a crawl that paces itself
+/// with sleeps between tiles is otherwise a poll shutdown has to wait out,
+/// and a grid crawl kept a stopped daemon alive for an hour beside its
+/// replacement, both polling everything. A poll abandoned this way is
+/// neither a success nor a failure — nothing is recorded, and the next
+/// start resumes from the last clean success as it would have anyway. A
+/// write that has already begun is left to finish; it is short, and a
+/// half-written batch is exactly what the transaction is for.
 async fn poll_and_store(
     store: &Store,
     source: &Arc<dyn Source>,
     state: &mut SourceState,
     aois: &[BoundingBox],
+    cancel: &CancellationToken,
 ) -> (PollOutcome, Option<Duration>) {
     let descriptor = source.descriptor();
 
-    let (result, partial) = poll_scoped(source, aois).await;
+    let (result, partial) = tokio::select! {
+        polled = poll_scoped(source, aois) => polled,
+        _ = cancel.cancelled() => {
+            tracing::info!(source = %descriptor.id, "poll abandoned: shutting down");
+            return (PollOutcome::default(), None);
+        }
+    };
     match result {
         Ok(observations) => {
             // Only feeds describing current state have a meaningful lag, and
